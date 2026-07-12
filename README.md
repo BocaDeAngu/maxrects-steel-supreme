@@ -13,7 +13,7 @@ npm install maxrects-steel-supreme
 Or from GitHub:
 
 ```bash
-npm install github:user/maxrects-steel-supreme
+npm install github:BocaDeAngu/maxrects-steel-supreme
 ```
 
 ## API
