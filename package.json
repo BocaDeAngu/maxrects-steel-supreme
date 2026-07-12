@@ -1,0 +1,26 @@
+{
+  "name": "maxrects-steel-supreme",
+  "version": "0.1.0",
+  "description": "MaxRects bin packing with BRS heuristic and look-ahead. Zero dependencies.",
+  "main": "index.js",
+  "bin": {
+    "nest": "./bin/cli.js"
+  },
+  "files": [
+    "index.js",
+    "src/",
+    "bin/"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/user/maxrects-steel-supreme.git"
+  },
+  "keywords": [
+    "nesting",
+    "bin-packing",
+    "maxrects",
+    "sheet-cutting",
+    "steel"
+  ]
+}
