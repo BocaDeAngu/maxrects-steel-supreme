@@ -15,7 +15,7 @@ const { nest } = require('./index');
 
 const scenarios = [
   {
-    name: '50x90 sentido largura (muitas)',
+    name: '50x90 direcao largura (muitas)',
     desc: 'Peças 50×90mm em chapa 1200×6000mm — testa fileiras horizontais com muitas peças',
     pieces: [{ w: 50, h: 90, label: 'peca', quantity: 3200 }],
     sheetW: 1200,
@@ -23,14 +23,14 @@ const scenarios = [
     opts: {
       margin: 0,
       rotation: true,
-      sentido: 'largura',
+      direcao: 'horizontal',
       lookAhead: 1,
       repeticoes: 1,
       maxSheets: 0
     }
   },
   {
-    name: '50x90 sem sentido (muitas)',
+    name: '50x90 sem direcao (muitas)',
     desc: 'Peças 50×90mm — sem direção forçada, muitas peças',
     pieces: [{ w: 50, h: 90, label: 'peca', quantity: 3200 }],
     sheetW: 1200,
@@ -38,30 +38,30 @@ const scenarios = [
     opts: {
       margin: 0,
       rotation: true,
-      sentido: '',
+      direcao: '',
       lookAhead: 1,
       repeticoes: 1,
       maxSheets: 0
     }
   },
   {
-    name: '50x90 sentido comprimento (muitas)',
-    desc: 'Peças 50×90mm — sentido comprimento, muitas peças',
+    name: '50x90 direcao comprimento (muitas)',
+    desc: 'Peças 50×90mm — direcao comprimento, muitas peças',
     pieces: [{ w: 50, h: 90, label: 'peca', quantity: 3200 }],
     sheetW: 1200,
     sheetH: 6000,
     opts: {
       margin: 0,
       rotation: true,
-      sentido: 'comprimento',
+      direcao: 'vertical',
       lookAhead: 1,
       repeticoes: 1,
       maxSheets: 0
     }
   },
   {
-    name: 'mistas sentido largura',
-    desc: 'Peças variadas, sentido largura',
+    name: 'mistas direcao largura',
+    desc: 'Peças variadas, direcao largura',
     pieces: [
       { w: 300, h: 200, label: 'gde', quantity: 20 },
       { w: 150, h: 100, label: 'med', quantity: 60 },
@@ -73,13 +73,13 @@ const scenarios = [
     opts: {
       margin: 5,
       rotation: true,
-      sentido: 'largura',
+      direcao: 'horizontal',
       lookAhead: 1,
       repeticoes: 1
     }
   },
   {
-    name: 'mistas sem sentido',
+    name: 'mistas sem direcao',
     desc: 'Peças variadas, sem direção forçada',
     pieces: [
       { w: 300, h: 200, label: 'gde', quantity: 20 },
@@ -92,7 +92,7 @@ const scenarios = [
     opts: {
       margin: 5,
       rotation: true,
-      sentido: '',
+      direcao: '',
       lookAhead: 1,
       repeticoes: 1
     }
@@ -109,13 +109,13 @@ const scenarios = [
     opts: {
       margin: 10,
       rotation: true,
-      sentido: '',
+      direcao: '',
       lookAhead: 2,
       repeticoes: 0
     }
   },
   {
-    name: 'barras 30x100 sentido largura (muitas)',
+    name: 'barras 30x100 direcao largura (muitas)',
     desc: 'Muitas barras 30×100mm — testa fileiras com alta densidade',
     pieces: [{ w: 30, h: 100, label: 'barra', quantity: 3000 }],
     sheetW: 1200,
@@ -123,7 +123,7 @@ const scenarios = [
     opts: {
       margin: 2,
       rotation: true,
-      sentido: 'largura',
+      direcao: 'horizontal',
       lookAhead: 2,
       repeticoes: 0,
       maxSheets: 5

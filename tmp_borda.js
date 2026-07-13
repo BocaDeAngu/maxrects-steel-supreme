@@ -7,7 +7,7 @@ const pecas = [
 
 const r = nest(pecas, 500, 500, {
   margin: 10, borda_mm: 10,
-  rotation: true, sentido: 'largura', lookAhead: 3, repeticoes: 0
+  rotation: true, direcao: 'horizontal', lookAhead: 3, repeticoes: 0
 });
 
 console.log(`Chapas: ${r.sheets.length}, Utilização: ${r.stats.avgUtilization}%`);

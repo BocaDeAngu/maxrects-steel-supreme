@@ -9,7 +9,7 @@ function sortByAreaDesc(pieces) {
 }
 
 /**
- * Sort pieces by height ascending — shelf-friendly for `sentido: largura`.
+ * Sort pieces by height ascending — shelf-friendly for `direcao: horizontal`.
  * Short pieces first creates compact rows that consume the full width.
  */
 function sortByHeightAsc(pieces) {
@@ -17,7 +17,7 @@ function sortByHeightAsc(pieces) {
 }
 
 /**
- * Sort pieces by width ascending — column-friendly for `sentido: comprimento`.
+ * Sort pieces by width ascending — column-friendly for `direcao: vertical`.
  * Narrow pieces first creates compact columns that consume the full height.
  */
 function sortByWidthAsc(pieces) {

@@ -232,12 +232,13 @@ test('PLACEMENT: repeticoes=1 collapses identical layouts', () => {
 });
 
 test('PLACEMENT: rotation fits when as-is does not', () => {
-  const bin = new MaxRectsBin(500, 700, 0);
+  const bin = new MaxRectsBin(500, 700, { margin: 0 });
   const pos = bin.insert(600, 400, { lookAhead: 0, rotation: true });
   assert(pos, 'Piece placed with rotation');
   assert(pos.rotated, 'Should have been rotated');
-  assert.strictEqual(pos.width, 600);
-  assert.strictEqual(pos.height, 400);
+  // When rotated, occupied width = original height, occupied height = original width
+  assert.strictEqual(pos.width, 400);
+  assert.strictEqual(pos.height, 600);
 });
 
 test('PLACEMENT: no rotation means piece must fit as-is', () => {
@@ -255,15 +256,17 @@ test('PLACEMENT: piece too large for sheet', () => {
 });
 
 test('PLACEMENT: margin between pieces', () => {
-  const bin = new MaxRectsBin(100, 100, 5);
+  const bin = new MaxRectsBin(100, 100, { margin: 5 });
   const p1 = bin.insert(40, 40, { lookAhead: 0, rotation: false });
   assert(p1, 'First piece placed');
   const p2 = bin.insert(40, 40, { lookAhead: 0, rotation: false });
   assert(p2, 'Second piece placed');
 
   // With 5mm margin, pieces must not overlap.
-  // They can go right of P1 (x ≥ 0+40+5=45) or below P1 (y ≥ 0+40+5=45)
-  const separated = (p2.x >= p1.x + p1.width + 5) || (p2.y >= p1.y + p1.height + 5);
+  // P1 occupies (p1.x, p1.y, 45, 45) with margin.
+  // P2 must be at least 5mm away in either axis.
+  // P1 without margin occupies (p1.x, p1.y, 40, 40).
+  const separated = (p2.x >= p1.x + 40 + 5) || (p2.y >= p1.y + 40 + 5);
   assert(separated, 'Pieces should be separated by at least margin');
 });
 
@@ -350,31 +353,31 @@ test('borda_mm + densidade + velocidadeCorte + areaMinRetalho together', () => {
   assert(result.stats.tempo_corte_total_min > 0, 'Total time');
 });
 
-test('sentido: largura vs comprimento produce different layouts', () => {
-  // With many thin-wide pieces, sentido should influence the layout
+test('direcao: horizontal vs vertical produce different layouts', () => {
+  // With many thin-wide pieces, direcao should influence the layout
   const pieces = [
     { w: 400, h: 200, label: 'A', quantity: 6 }
   ];
 
-  const rLarg = nest(pieces, 1000, 1000, { sentido: 'largura', lookAhead: 0, margin: 0 });
-  const rComp = nest(pieces, 1000, 1000, { sentido: 'comprimento', lookAhead: 0, margin: 0 });
+  const rHoriz = nest(pieces, 1000, 1000, { direcao: 'horizontal', lookAhead: 0, margin: 0 });
+  const rVert = nest(pieces, 1000, 1000, { direcao: 'vertical', lookAhead: 0, margin: 0 });
 
-  assert.strictEqual(rLarg.unplaced, 0, 'All placed with largura');
-  assert.strictEqual(rComp.unplaced, 0, 'All placed with comprimento');
+  assert.strictEqual(rHoriz.unplaced, 0, 'All placed with horizontal');
+  assert.strictEqual(rVert.unplaced, 0, 'All placed with vertical');
 
   // Both should produce the same number of sheets (just different internal layouts)
-  assert.strictEqual(rLarg.sheets.length, rComp.sheets.length);
+  assert.strictEqual(rHoriz.sheets.length, rVert.sheets.length);
 
-  // Verify sentido is accepted
-  const rInvalid = nest(pieces, 1000, 1000, { sentido: 'invalido', lookAhead: 0 });
-  assert.strictEqual(rInvalid.unplaced, 0, 'Invalid sentido falls back to auto');
+  // Verify direcao is accepted
+  const rInvalid = nest(pieces, 1000, 1000, { direcao: 'invalido', lookAhead: 0 });
+  assert.strictEqual(rInvalid.unplaced, 0, 'Invalid direcao falls back to auto');
 });
 
-test('MaxRectsBin constructor accepts sentido', () => {
-  const bin = new MaxRectsBin(100, 100, 0, 'largura');
-  assert(bin.sentido === 'largura', 'sentido stored');
-  const bin2 = new MaxRectsBin(100, 100, 0, 'comprimento');
-  assert(bin2.sentido === 'comprimento', 'sentido comprimento');
+test('MaxRectsBin constructor accepts direcao', () => {
+  const bin = new MaxRectsBin(100, 100, { margin: 0, direcao: 'horizontal' });
+  assert(bin.direcao === 'horizontal', 'direcao stored');
+  const bin2 = new MaxRectsBin(100, 100, { margin: 0, direcao: 'vertical' });
+  assert(bin2.direcao === 'vertical', 'direcao vertical');
 });
 
 test('nest function README example works', () => {

@@ -107,26 +107,28 @@ function _estrategiaConfig(estrategia) {
           tier2: { weight: 10.0, mode: 'zigzag' },
           tier3: { weight: 0.2, mode: 'direcao' },
           tier4: { weight: 0.05 },
-          tier5: { weight: 0.01 },
+          tier5: { weight: 0.10 },   // squareness ajuda agrupar
           tiebreaker: { weight: 0 }
         }
       };
 
     case 3: // 1×1 — bloco denso e compacto (CNC: 1x1.CNC)
-      // BRS puro com squareness forte + waste penalty alto
-      // sem split bias (neutro) — cada peça decide individualmente
-      // lookAhead alto para otimizar ocupação geral
+      // Modo 'square': maximiza quadratura do bounding box a cada
+      // inserção. Sort ascendente (pequenas 1º). Proximity penalty
+      // evita dispersão. Waste + squareness extras como reforço.
       return {
         label: '1×1',
         direcao: '',
-        sortComparator: null,
-        lookAhead: 10,
+        sortComparator: (a, b) => (a.w * a.h) - (b.w * b.h),
+        lookAhead: 0,
         splitBias: 0,
+        zigzag: false,
+        proximityWeight: 3.0,
         tiers: {
-          tier2: { weight: 1.0, mode: 'brs' },
+          tier2: { weight: 10.0, mode: 'square' },
           tier3: { weight: 0 },
-          tier4: { weight: 0.20 },
-          tier5: { weight: 0.50 },
+          tier4: { weight: 0.50 },
+          tier5: { weight: 2.0 },
           tiebreaker: { weight: 0 }
         }
       };
@@ -167,6 +169,12 @@ class MaxRectsBin {
 
     // zigzag alternation direction: 1 = right/down, -1 = left/up
     this._zigzagDir = 1;
+    this._lastPx = -1;
+    this._lastPy = -1;
+    this._bboxMinX = Infinity;
+    this._bboxMinY = Infinity;
+    this._bboxMaxX = -Infinity;
+    this._bboxMaxY = -Infinity;
   }
 
   /**
@@ -241,7 +249,16 @@ class MaxRectsBin {
     this.placed.push(placedRect);
     this._splitRect(best.frIdx, best.px, best.py, best.pw, best.ph);
 
-    // ZigZag: alterna direção da pontuação (direita↔esquerda) a cada peça
+    this._lastPx = best.px;
+    this._lastPy = best.py;
+    if (best.px < this._bboxMinX) this._bboxMinX = best.px;
+    if (best.py < this._bboxMinY) this._bboxMinY = best.py;
+    const br = best.px + best.pw;
+    const bb = best.py + best.ph;
+    if (br > this._bboxMaxX) this._bboxMaxX = br;
+    if (bb > this._bboxMaxY) this._bboxMaxY = bb;
+
+    // ZigZag: alterna direção da pontuação (→↔↓) a cada peça
     if (this._strategy?.zigzag) {
       this._zigzagDir *= -1;
     }
@@ -275,8 +292,14 @@ class MaxRectsBin {
     let maxV = vSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
     let maxH = hSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
 
-    if (this.direcao === 'vertical') maxV *= 5;
-    else if (this.direcao === 'horizontal') maxH *= 5;
+    if (this._strategy?.zigzag) {
+      if (this._zigzagDir > 0) maxH *= 5;   // → phase: vFirst chosen
+      else maxV *= 5;                        // ↓ phase: hFirst chosen
+    } else if (this.direcao === 'vertical') {
+      maxV *= 5;
+    } else if (this.direcao === 'horizontal') {
+      maxH *= 5;
+    }
 
     const splits = maxV <= maxH ? vSplits : hSplits;
     const binArea = this.binW * this.binH;
@@ -311,8 +334,36 @@ class MaxRectsBin {
       } else if (t2?.mode === 'direcao' && this.direcao === 'horizontal') {
         tier2 = cand.px * binArea / this.binW;
       } else if (t2?.mode === 'zigzag') {
-        // ZigZag: alterna entre preferir X maior (dir=1) e X menor (dir=-1)
-        tier2 = cand.px * binArea / this.binW * this._zigzagDir;
+        // ZigZag: alterna entre expandir p/ direita (→) e p/ baixo (↓)
+        // com penalidade de proximidade p/ evitar saltos desconectados
+        const prox = this._strategy?.proximityWeight ?? 1.2;
+        if (this._zigzagDir > 0) {
+          tier2 = cand.px * binArea / this.binW;   // → phase: prefer X (right)
+          if (this._lastPx >= 0) {
+            tier2 -= Math.abs(cand.py - this._lastPy) * binArea / this.binH * prox;
+          }
+        } else {
+          tier2 = cand.py * binArea / this.binH;   // ↓ phase: prefer Y (down)
+          if (this._lastPx >= 0) {
+            tier2 -= Math.abs(cand.px - this._lastPx) * binArea / this.binW * prox;
+          }
+        }
+      } else if (t2?.mode === 'square') {
+        // Squareness do bounding box após colocar esta peça.
+        // Quanto mais quadrado o bbox resultante, maior o score.
+        const newMinX = Math.min(this._bboxMinX, cand.px);
+        const newMinY = Math.min(this._bboxMinY, cand.py);
+        const newMaxX = Math.max(this._bboxMaxX, cand.px + cand.pw);
+        const newMaxY = Math.max(this._bboxMaxY, cand.py + cand.ph);
+        const bw = Math.max(1, newMaxX - newMinX);
+        const bh = Math.max(1, newMaxY - newMinY);
+        tier2 = (Math.min(bw, bh) / Math.max(bw, bh)) * binArea;
+        // Penalidade de proximidade p/ evitar dispersão
+        if (this._strategy?.proximityWeight && this._lastPx >= 0) {
+          const prox = this._strategy.proximityWeight;
+          tier2 -= Math.abs(cand.px - this._lastPx) * binArea / this.binW * prox;
+          tier2 -= Math.abs(cand.py - this._lastPy) * binArea / this.binH * prox;
+        }
       } else {
         // BRS clássico
         tier2 = splits.reduce((max, r) => Math.max(max, r.w * r.h), 0);
@@ -324,22 +375,26 @@ class MaxRectsBin {
     let tier3 = 0;
     const t3 = T.tier3;
     if (t3?.mode === 'direcao' && t3.weight > 0) {
-      if (this.direcao === 'vertical') {
+      const dir = this._strategy?.zigzag
+        ? (this._zigzagDir > 0 ? 'horizontal' : 'vertical')
+        : this.direcao;
+      if (dir === 'vertical') {
         tier3 = (cand.pw / fr.w) * binArea * t3.weight;
-      } else if (this.direcao === 'horizontal') {
+      } else if (dir === 'horizontal') {
         tier3 = (cand.ph / fr.h) * binArea * t3.weight;
       }
     }
 
     // ── Tier 4: waste penalty ───────────────────────────
+    // Penaliza colocação que deixa retângulo livre muito maior que a peça
+    // (anti-spread: log10 da razão entre maior leftover e 10× área da peça)
     let tier4 = 0;
     const t4 = T.tier4;
-    if (t4?.weight) {
-      const frArea = fr.w * fr.h;
+    if (t4?.weight && splits.length > 0) {
+      const maxResultArea = splits.reduce((max, r) => Math.max(max, r.w * r.h), 0);
       const candArea = cand.pw * cand.ph;
-      tier4 = frArea > 0
-        ? -(1 - candArea / frArea) * binArea * t4.weight
-        : 0;
+      const ratio = maxResultArea / Math.max(1, candArea * 10);
+      tier4 = -Math.log10(Math.max(1, ratio)) * binArea * t4.weight;
     }
 
     // ── Tier 5: squareness bonus ────────────────────────
@@ -364,8 +419,12 @@ class MaxRectsBin {
         tiebreaker = -cand.px * tb.weight;
       }
     } else if (tb?.weight && tb?.mode === 'zigzag') {
-      // ZigZag: alterna entre preferir X maior (dir=1) e X menor (dir=-1)
-      tiebreaker = cand.px * this._zigzagDir * tb.weight;
+      // ZigZag: prefere X menor na → phase, Y menor na ↓ phase
+      if (this._zigzagDir > 0) {
+        tiebreaker = -cand.px * tb.weight;
+      } else {
+        tiebreaker = -cand.py * tb.weight;
+      }
     }
 
     return tier1 + tier2 + tier3 + tier4 + tier5 + tiebreaker;
@@ -395,8 +454,14 @@ class MaxRectsBin {
     //   neutral (0) → pure geometric BRS decides
     const sb = this._strategy?.splitBias ?? 0;
     if (sb > 0) {
-      if (this.direcao === 'vertical') maxV *= sb;
-      else if (this.direcao === 'horizontal') maxH *= sb;
+      if (this._strategy?.zigzag) {
+        if (this._zigzagDir > 0) maxH *= sb;   // → phase: vFirst (expande p/ direita)
+        else maxV *= sb;                        // ↓ phase: hFirst (expande p/ baixo)
+      } else if (this.direcao === 'vertical') {
+        maxV *= sb;
+      } else if (this.direcao === 'horizontal') {
+        maxH *= sb;
+      }
     }
 
     const chosen = maxV <= maxH ? vFirst : hFirst;
