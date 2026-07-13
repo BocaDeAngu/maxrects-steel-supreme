@@ -1,5 +1,7 @@
 /**
- * MaxRects Bin Packing — with 3-region split, BRS heuristic, and look-ahead.
+ * MaxRects Bin Packing — with 3-region split, BRS heuristic, look-ahead,
+ * and configurable strategy (estrategia) that tunes sort, scoring tiers,
+ * split bias, and placement direction for 4 distinct packing patterns.
  *
  * Algorithm:
  *  1. Maintain a list of free rectangles (freeRects).
@@ -14,6 +16,100 @@
  * Reference: https://github.com/juj/RectangleBinPack (original MaxRects)
  */
 
+// ═══════════════════════════════════════════════════════════
+//  Strategy configuration
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Maps estrategia (0|1|2|3) to a full algorithm configuration:
+ *   sentido, sort order, lookAhead, split bias, and per-tier weights.
+ *
+ * Each tier has a `weight` multiplier and optional `mode` string.
+ *
+ * Tiers (applied in _scoreCandidate):
+ *   Tier 1 — look-ahead future-fit count
+ *   Tier 2 — spatial scoring (BRS classic, SRS directional, or none)
+ *   Tier 3 — alignment bonus (how well piece fills the dimension)
+ *   Tier 4 — waste penalty (large free rect eaten by small piece)
+ *   Tier 5 — squareness bonus (prefer splits leaving near-square rects)
+ *   Tiebreaker — sentido-based position preference
+ *
+ * @param {number} estrategia — 0=largura, 1=comprimento, 2=zigzag, 3=1x1
+ * @returns {object} config
+ */
+function _estrategiaConfig(estrategia) {
+  const e = [0, 1, 2, 3].includes(estrategia) ? estrategia : 0;
+
+  switch (e) {
+    case 0: // largura — single vertical column (CNC: largura)
+      return {
+        label: 'Largura',
+        sentido: 'largura',
+        sortComparator:
+          (a, b) => (b.w * b.h) - (a.w * a.h) || a.h - b.h,
+        lookAhead: 3,
+        splitBias: 50,
+        tiers: {
+          tier2: { weight: 1.0, mode: 'sentido' },
+          tier3: { weight: 0.3, mode: 'sentido' },
+          tier4: { weight: 0.05 },
+          tier5: { weight: 0.05 },
+          tiebreaker: { weight: 0.001, mode: 'sentido' }
+        }
+      };
+
+    case 1: // comprimento — single horizontal row (CNC: comprimento)
+      return {
+        label: 'Comprimento',
+        sentido: 'comprimento',
+        sortComparator:
+          (a, b) => (b.w * b.h) - (a.w * a.h) || a.w - b.w,
+        lookAhead: 3,
+        splitBias: 50,
+        tiers: {
+          tier2: { weight: 1.0, mode: 'sentido' },
+          tier3: { weight: 0.3, mode: 'sentido' },
+          tier4: { weight: 0.05 },
+          tier5: { weight: 0.05 },
+          tiebreaker: { weight: 0.001, mode: 'sentido' }
+        }
+      };
+
+    case 2: // zigzag — multi-row grid, zigzag toolpath (CNC: aceitavel)
+      return {
+        label: 'ZigZag',
+        sentido: '',
+        sortComparator:
+          (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h),
+        lookAhead: 2,
+        splitBias: 0,
+        tiers: {
+          tier2: { weight: 1.0, mode: 'brs' },
+          tier3: { weight: 0.1, mode: 'none' },
+          tier4: { weight: 0.02 },
+          tier5: { weight: 0.02 },
+          tiebreaker: { weight: 0 }
+        }
+      };
+
+    case 3: // 1x1 — tight dense block (CNC: perfeito)
+      return {
+        label: '1×1',
+        sentido: '',
+        sortComparator: null, // use default area desc
+        lookAhead: 5,
+        splitBias: 0,
+        tiers: {
+          tier2: { weight: 1.0, mode: 'brs' },
+          tier3: { weight: 0 },
+          tier4: { weight: 0.05 },
+          tier5: { weight: 0.20 },
+          tiebreaker: { weight: 0 }
+        }
+      };
+  }
+}
+
 // ────────────────────────────────────────────────────────────
 //  MaxRectsBin
 // ────────────────────────────────────────────────────────────
@@ -22,15 +118,29 @@ class MaxRectsBin {
   /**
    * @param {number} width  - Sheet width in mm
    * @param {number} height - Sheet height in mm
-   * @param {number} margin - Gap between pieces in mm (default 0)
+   * @param {object} [opts] - Configuration object
+   * @param {number} [opts.margin=0]     - Gap between pieces
+   * @param {string} [opts.sentido='']   - 'largura'|'comprimento'|''
+   * @param {number} [opts.estrategia=0]  - 0|1|2|3 — packed into this config
    */
-  constructor(width, height, margin = 0, sentido = '') {
+  constructor(width, height, opts = {}) {
     this.binW = width;
     this.binH = height;
-    this.margin = margin;
-    this.sentido = sentido; // '' | 'largura' | 'comprimento'
+    this.margin = opts.margin || 0;
+    this.sentido = opts.sentido || '';
     this.freeRects = [{ x: 0, y: 0, w: width, h: height }];
     this.placed = [];
+
+    // estrategia -1 = backward compat (classic sentido mode, no overrides)
+    const est = [0, 1, 2, 3].includes(opts.estrategia) ? opts.estrategia : -1;
+    this.estrategia = est;
+    if (est >= 0) {
+      const cfg = _estrategiaConfig(est);
+      this._strategy = cfg;
+      this.sentido = cfg.sentido; // strategy sentido overrides passed sentido
+    } else {
+      this._strategy = null;
+    }
   }
 
   /**
@@ -39,13 +149,15 @@ class MaxRectsBin {
    * @param {number} w - Piece width
    * @param {number} h - Piece height
    * @param {object} [opts]
-   * @param {number} [opts.lookAhead=1] - Look-ahead depth (0 = greedy)
+   * @param {number} [opts.lookAhead]   - Override strategy lookAhead (optional)
    * @param {Array}  [opts.remaining=[]] - Remaining pieces for look-ahead
    * @param {boolean} [opts.rotation=true] - Allow 90° rotation
    * @returns {object|null} Placed rect { x, y, width, height, rotated } or null
    */
   insert(w, h, opts = {}) {
-    const { lookAhead = 1, remaining = [], rotation = true } = opts;
+    // lookAhead from strategy config unless explicitly overridden
+    const lookAhead = opts.lookAhead != null ? opts.lookAhead : (this._strategy?.lookAhead ?? 1);
+    const { remaining = [], rotation = true } = opts;
     const mw = w + this.margin;
     const mh = h + this.margin;
 
@@ -100,79 +212,119 @@ class MaxRectsBin {
   }
 
   // ──────────────────────────────────────────────────────────
-  //  Scoring: BRS + Look-ahead
+  //  Scoring: BRS + Look-ahead (multi-tier, strategy-configurable)
   // ──────────────────────────────────────────────────────────
 
   /**
    * Score one candidate placement using tiered BRS + look-ahead.
    *
-   * Tier 1 — count how many future pieces fit after this placement
-   *   (up to `lookAhead` depth). Each piece that fits adds
-   *   `binArea × 2` to the score, so this dominates Tier 2.
+   * Each tier's weight is read from `this._strategy.tiers`, allowing
+   * each estrategia to tune the scoring independently.
    *
-   * Tier 2 — BRS (largest remaining rect) for automatic mode;
-   *   SRS (smallest remaining rect) for sentido modes — fills gaps first,
-   *   which consumes the target dimension (width for largura, height for comprimento).
+   * Tier 1 — look-ahead future-fit count (dominant: binArea × 2 per piece).
+   * Tier 2 — spatial score: BRS (largest remaining rect) or sentido-directional.
+   * Tier 3 — alignment bonus (piece fills the target dimension).
+   * Tier 4 — waste penalty (large free rect consumed by small piece).
+   * Tier 5 — squareness bonus (prefer splits leaving near-square rects).
+   * Tiebreaker — sentido position preference (tiny weight, only breaks ties).
    */
   _scoreCandidate(cand, { lookAhead, remaining, rotation }) {
     const fr = this.freeRects[cand.frIdx];
     const vSplits = this._genSplitV(fr, cand.px, cand.py, cand.pw, cand.ph);
     const hSplits = this._genSplitH(fr, cand.px, cand.py, cand.pw, cand.ph);
 
-    // Pick the better split (same logic as _splitRect, including sentido bias)
+    // Pick the better split (com bias suave de 5x para sentido)
     let maxV = vSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
     let maxH = hSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
 
-    // sentido: largura (Y) → penaliza V → hFirst (preenche X do alg = Y do SVG = largura)
-    //          comprimento (X) → penaliza H → vFirst (preenche Y do alg = X do SVG = comprimento)
-    if (this.sentido === 'largura') maxV *= 1.15;
-    else if (this.sentido === 'comprimento') maxH *= 1.15;
+    if (this.sentido === 'largura') maxV *= 5;
+    else if (this.sentido === 'comprimento') maxH *= 5;
 
     const splits = maxV <= maxH ? vSplits : hSplits;
-
     const binArea = this.binW * this.binH;
+    const T = this._strategy?.tiers || _estrategiaConfig(0).tiers;
 
-    // ── Tier 1: look-ahead — count pieces that fit ─────────
+    // ── Tier 1: look-ahead (always active, high weight) ──
     let futureFitCount = 0;
-    if (lookAhead > 0 && remaining.length > 0) {
+    if (lookAhead > 0 && remaining.length > 0 && splits.length > 0) {
       const depth = Math.min(lookAhead, remaining.length);
-
-      for (let d = 0; d < depth; d++) {
-        const p = remaining[d];
-        const pmw = p.w + this.margin;
-        const pmh = p.h + this.margin;
-        let fits = false;
-
-        for (const r of splits) {
-          if ((pmw <= r.w && pmh <= r.h) ||
-              (rotation && pmh <= r.w && pmw <= r.h)) {
-            fits = true;
-            break;
+      for (const sr of splits) {
+        let fitsInRect = 0;
+        for (let d = 0; d < depth; d++) {
+          const p = remaining[d];
+          const pmw = p.w + this.margin;
+          const pmh = p.h + this.margin;
+          if ((pmw <= sr.w && pmh <= sr.h) ||
+              (rotation && pmh <= sr.w && pmw <= sr.h)) {
+            fitsInRect++;
           }
         }
+        futureFitCount += fitsInRect;
+      }
+    }
+    const tier1 = futureFitCount * binArea * 2;
 
-        if (fits) {
-          futureFitCount++;
-        } else {
-          break;
-        }
+    // ── Tier 2: spatial score ───────────────────────────
+    let tier2 = 0;
+    if (splits.length > 0) {
+      const t2 = T.tier2;
+      if (t2?.mode === 'sentido' && this.sentido === 'largura') {
+        tier2 = cand.py * binArea / this.binH;
+      } else if (t2?.mode === 'sentido' && this.sentido === 'comprimento') {
+        tier2 = cand.px * binArea / this.binW;
+      } else {
+        // BRS clássico
+        tier2 = splits.reduce((max, r) => Math.max(max, r.w * r.h), 0);
+      }
+      tier2 *= (t2?.weight ?? 1.0);
+    }
+
+    // ── Tier 3: alignment bonus ─────────────────────────
+    let tier3 = 0;
+    const t3 = T.tier3;
+    if (t3?.mode === 'sentido' && t3.weight > 0) {
+      if (this.sentido === 'largura') {
+        tier3 = (cand.pw / fr.w) * binArea * t3.weight;
+      } else if (this.sentido === 'comprimento') {
+        tier3 = (cand.ph / fr.h) * binArea * t3.weight;
       }
     }
 
-    // ── Tier 2: BRS (auto) / SRS (sentido) — remaining rect area ──
-    let brs;
-    if (splits.length === 0) {
-      brs = 0;
-    } else if (this.sentido === 'largura' || this.sentido === 'comprimento') {
-      // SRS: smallest remaining space — preenche gaps primeiro = consome direção
-      brs = -splits.reduce((min, r) => Math.min(min, r.w * r.h), Infinity);
-    } else {
-      // BRS: largest remaining space (padrão MaxRects)
-      brs = splits.reduce((max, r) => Math.max(max, r.w * r.h), 0);
+    // ── Tier 4: waste penalty ───────────────────────────
+    let tier4 = 0;
+    const t4 = T.tier4;
+    if (t4?.weight) {
+      const frArea = fr.w * fr.h;
+      const candArea = cand.pw * cand.ph;
+      tier4 = frArea > 0
+        ? -(1 - candArea / frArea) * binArea * t4.weight
+        : 0;
     }
 
-    // Tier 1 dominates (binArea × 2 per future piece > any BRS/SRS)
-    return futureFitCount * binArea * 2 + brs;
+    // ── Tier 5: squareness bonus ────────────────────────
+    let tier5 = 0;
+    const t5 = T.tier5;
+    if (t5?.weight && splits.length > 0) {
+      let sqSum = 0;
+      for (const s of splits) {
+        const aspect = Math.min(s.w, s.h) / Math.max(s.w, s.h);
+        sqSum += aspect * aspect;
+      }
+      tier5 = (sqSum / splits.length) * binArea * t5.weight;
+    }
+
+    // ── Tiebreaker ──────────────────────────────────────
+    let tiebreaker = 0;
+    const tb = T.tiebreaker;
+    if (tb?.weight && tb?.mode === 'sentido') {
+      if (this.sentido === 'largura') {
+        tiebreaker = -cand.py * tb.weight;
+      } else if (this.sentido === 'comprimento') {
+        tiebreaker = -cand.px * tb.weight;
+      }
+    }
+
+    return tier1 + tier2 + tier3 + tier4 + tier5 + tiebreaker;
   }
 
   // ──────────────────────────────────────────────────────────
@@ -192,10 +344,16 @@ class MaxRectsBin {
     let maxV = vFirst.reduce((m, r) => Math.max(m, r.w * r.h), 0);
     let maxH = hFirst.reduce((m, r) => Math.max(m, r.w * r.h), 0);
 
-    // sentido: largura (Y) → penaliza V → hFirst (preenche X do alg = Y do SVG = largura)
-    //          comprimento (X) → penaliza H → vFirst (preenche Y do alg = X do SVG = comprimento)
-    if (this.sentido === 'largura') maxV *= 1.15;
-    else if (this.sentido === 'comprimento') maxH *= 1.15;
+    // splitBias (from strategy config): strong multiplier on the
+    // DIS-favoured split orientation so the other is chosen.
+    //   largura  → inflate V → hFirst chosen (fills X = CNC width)
+    //   comprimento → inflate H → vFirst chosen (fills Y = CNC length)
+    //   neutral (0) → pure geometric BRS decides
+    const sb = this._strategy?.splitBias ?? 0;
+    if (sb > 0) {
+      if (this.sentido === 'largura') maxV *= sb;
+      else if (this.sentido === 'comprimento') maxH *= sb;
+    }
 
     const chosen = maxV <= maxH ? vFirst : hFirst;
 
@@ -339,6 +497,7 @@ function _callKey(pieces, sheetW, sheetH, opts) {
   h += '|m=' + (opts.margin || 0);
   h += '|b=' + (opts.borda_mm || 0);
   h += '|s=' + (opts.sentido || '');
+  h += '|e=' + (opts.estrategia != null ? opts.estrategia : '-1');
   h += '|l=' + (opts.lookAhead !== undefined ? opts.lookAhead : 1);
   h += '|d=' + (parseFloat(opts.densidade) || 0);
   h += '|v=' + (parseFloat(opts.velocidadeCorte) || 0);
@@ -444,8 +603,12 @@ function _run(pieces, sheetDescriptors, opts) {
   const velocidadeCorte = parseFloat(opts.velocidadeCorte) || 0;
   const areaMinRetalho = Math.max(0, parseInt(opts.areaMinRetalho, 10) || 0);
   const sentido = ['largura', 'comprimento'].includes(opts.sentido) ? opts.sentido : '';
+  const estrategia = [0, 1, 2, 3].includes(opts.estrategia) ? opts.estrategia : -1;
 
-  const { sortByAreaDesc, sortByWidthAsc, sortByHeightAsc } = require('./sort');
+  // When estrategia is set (0-3), load its config and override sentido
+  const strategyCfg = estrategia >= 0 ? _estrategiaConfig(estrategia) : null;
+
+  const { sortByAreaDesc } = require('./sort');
 
   // Expand quantities, carrying extra fields
   const expanded = [];
@@ -464,11 +627,18 @@ function _run(pieces, sheetDescriptors, opts) {
     }
   }
 
-  // Sort: sentido orienta a ordenação para consumir a dimensão desejada
+  // Sort: estrategia provides its own sort comparator;
+  // fallback to sentido-based sorting for backward compat.
   let sorted;
-  if (sentido === 'largura') sorted = sortByHeightAsc(expanded);
-  else if (sentido === 'comprimento') sorted = sortByWidthAsc(expanded);
-  else sorted = sortByAreaDesc(expanded);
+  if (strategyCfg?.sortComparator) {
+    sorted = [...expanded].sort(strategyCfg.sortComparator);
+  } else if (sentido === 'largura') {
+    sorted = [...expanded].sort((a, b) => (b.w * b.h) - (a.w * a.h) || a.h - b.h);
+  } else if (sentido === 'comprimento') {
+    sorted = [...expanded].sort((a, b) => (b.w * b.h) - (a.w * a.h) || a.w - b.w);
+  } else {
+    sorted = sortByAreaDesc(expanded);
+  }
 
   if (sorted.length === 0) {
     return {
@@ -538,7 +708,7 @@ function _run(pieces, sheetDescriptors, opts) {
         if (groupSheets.length > 1) remaining = _origRemaining.slice(); else break;
       }
 
-      const bin = new MaxRectsBin(effW, effH, margin, sentido);
+      const bin = new MaxRectsBin(effW, effH, { margin, sentido, estrategia });
       const placed = [];
       const stillRemaining = [];
 

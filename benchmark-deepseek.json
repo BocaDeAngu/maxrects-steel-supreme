@@ -1,0 +1,198 @@
+[
+  {
+    "scenario": "50x90 sentido largura (muitas)",
+    "sheets": 2,
+    "totalPieces": 3200,
+    "totalArea": 14400000,
+    "avgUtilization": 100,
+    "unplaced": 0,
+    "timeMs": 50,
+    "sheetsDetail": [
+      {
+        "sheet": 1,
+        "pieces": 1587,
+        "usedArea": 7141500,
+        "utilization": 99.19,
+        "vezesCortada": 1
+      },
+      {
+        "sheet": 2,
+        "pieces": 26,
+        "usedArea": 117000,
+        "utilization": 1.63,
+        "vezesCortada": 1
+      }
+    ]
+  },
+  {
+    "scenario": "50x90 sem sentido (muitas)",
+    "sheets": 2,
+    "totalPieces": 3200,
+    "totalArea": 14400000,
+    "avgUtilization": 100,
+    "unplaced": 0,
+    "timeMs": 44,
+    "sheetsDetail": [
+      {
+        "sheet": 1,
+        "pieces": 1572,
+        "usedArea": 7074000,
+        "utilization": 98.25,
+        "vezesCortada": 1
+      },
+      {
+        "sheet": 2,
+        "pieces": 56,
+        "usedArea": 252000,
+        "utilization": 3.5,
+        "vezesCortada": 1
+      }
+    ]
+  },
+  {
+    "scenario": "50x90 sentido comprimento (muitas)",
+    "sheets": 2,
+    "totalPieces": 3200,
+    "totalArea": 14400000,
+    "avgUtilization": 100,
+    "unplaced": 0,
+    "timeMs": 107,
+    "sheetsDetail": [
+      {
+        "sheet": 1,
+        "pieces": 1578,
+        "usedArea": 7101000,
+        "utilization": 98.63,
+        "vezesCortada": 1
+      },
+      {
+        "sheet": 2,
+        "pieces": 44,
+        "usedArea": 198000,
+        "utilization": 2.75,
+        "vezesCortada": 1
+      }
+    ]
+  },
+  {
+    "scenario": "mistas sentido largura",
+    "sheets": 1,
+    "totalPieces": 260,
+    "totalArea": 2940000,
+    "avgUtilization": 81.67,
+    "unplaced": 0,
+    "timeMs": 2,
+    "sheetsDetail": [
+      {
+        "sheet": 1,
+        "pieces": 260,
+        "usedArea": 2940000,
+        "utilization": 81.67,
+        "vezesCortada": 1
+      }
+    ]
+  },
+  {
+    "scenario": "mistas sem sentido",
+    "sheets": 2,
+    "totalPieces": 260,
+    "totalArea": 2940000,
+    "avgUtilization": 40.83,
+    "unplaced": 0,
+    "timeMs": 4,
+    "sheetsDetail": [
+      {
+        "sheet": 1,
+        "pieces": 258,
+        "usedArea": 2931000,
+        "utilization": 81.42,
+        "vezesCortada": 1
+      },
+      {
+        "sheet": 2,
+        "pieces": 2,
+        "usedArea": 9000,
+        "utilization": 0.25,
+        "vezesCortada": 1
+      }
+    ]
+  },
+  {
+    "scenario": "poucas pecas grandes",
+    "sheets": 5,
+    "totalPieces": 20,
+    "totalArea": 6240000,
+    "avgUtilization": 62.4,
+    "unplaced": 0,
+    "timeMs": 0,
+    "sheetsDetail": [
+      {
+        "sheet": 1,
+        "pieces": 3,
+        "usedArea": 1440000,
+        "utilization": 72,
+        "vezesCortada": 1
+      },
+      {
+        "sheet": 2,
+        "pieces": 3,
+        "usedArea": 1440000,
+        "utilization": 72,
+        "vezesCortada": 1
+      },
+      {
+        "sheet": 3,
+        "pieces": 3,
+        "usedArea": 1160000,
+        "utilization": 58,
+        "vezesCortada": 1
+      },
+      {
+        "sheet": 4,
+        "pieces": 7,
+        "usedArea": 1400000,
+        "utilization": 70,
+        "vezesCortada": 1
+      },
+      {
+        "sheet": 5,
+        "pieces": 4,
+        "usedArea": 800000,
+        "utilization": 40,
+        "vezesCortada": 1
+      }
+    ]
+  },
+  {
+    "scenario": "barras 30x100 sentido largura (muitas)",
+    "sheets": 3,
+    "totalPieces": 3000,
+    "totalArea": 9000000,
+    "avgUtilization": 83.33,
+    "unplaced": 0,
+    "timeMs": 23,
+    "sheetsDetail": [
+      {
+        "sheet": 1,
+        "pieces": 1078,
+        "usedArea": 3234000,
+        "utilization": 89.83,
+        "vezesCortada": 1
+      },
+      {
+        "sheet": 2,
+        "pieces": 1078,
+        "usedArea": 3234000,
+        "utilization": 89.83,
+        "vezesCortada": 1
+      },
+      {
+        "sheet": 3,
+        "pieces": 844,
+        "usedArea": 2532000,
+        "utilization": 70.33,
+        "vezesCortada": 1
+      }
+    ]
+  }
+]

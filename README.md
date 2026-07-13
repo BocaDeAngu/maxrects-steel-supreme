@@ -39,6 +39,7 @@ const result = nest(
     velocidadeCorte: 0,  // cutting constant mm²/min (0=skip)
     areaMinRetalho: 0,   // min waste area mm² (0=skip retalhos)
     repeticoes: 0,        // 0 = each sheet returned individually. 1 = collapse identical layouts
+    estrategia: 0,        // 0=largura, 1=comprimento, 2=zigzag, 3=1x1 (overrides `sentido`)
     filterEspessura: 0,   // 1 = filter pieces by sheetEspessura (skip incompatible espessura)
     filterMaterial: 0,    // 1 = filter pieces by sheetMaterial (skip incompatible material)
     sheetEspessura: 0,    // sheet thickness (mm), used when filterEspessura=1
@@ -61,6 +62,7 @@ const result = nest(
 | `velocidadeCorte` | `0` | Cutting speed constant in mm²/min. Formula: `perim / (K / espessura)`. When set, calculates `tempo_corte_min` per piece and `perimetro_mm` |
 | `areaMinRetalho` | `0` | Minimum area in mm² for a waste rectangle to be reported. When set, generates `retalhos[]` per sheet |
 | `repeticoes` | `0` | Repetition mode. `0` = each sheet is returned individually (default). `1` = collapse identical layouts into one entry with `vezes_cortada` counting how many physical copies that layout represents. When `repeticoes=1`, the `sheets` array shrinks but each sheet carries `vezes_cortada` with the repetition count. The `totalSheets` stat reflects unique layouts, not physical copies |
+| `estrategia` | `-1` (disabled) | Packing strategy: `0` = Largura (single column, vertical), `1` = Comprimento (single row, horizontal), `2` = ZigZag (multi-row grid, height-desc sort), `3` = 1×1 (tight dense block, high quadratura). When set (0-3), overrides `sentido` and controls sort order, scoring tier weights, and split bias internally. `-1` = disabled — uses classic `sentido` mode for backward compatibility |
 | `filterEspessura` | `0` | When `1`, filters out pieces whose `espessura_mm` does not match the sheet's `espessura_mm` (or `sheetEspessura`). Pieces with `espessura_mm=0` (unspecified) pass through. Requires sheet to have `espessura_mm` (in multi-sheet mode) or `sheetEspessura` in opts (legacy single-sheet mode) |
 | `filterMaterial` | `0` | When `1`, filters out pieces whose `material` does not match the sheet's `material`. Pieces without `material` pass through. Requires sheet to have `material` (in multi-sheet mode) or `sheetMaterial` in opts (legacy single-sheet mode) |
 | `sheetEspessura` | `0` | Sheet thickness in mm. Used as fallback when `filterEspessura=1` and the sheet descriptor has no `espessura_mm`. Also used directly in legacy single-sheet mode |
