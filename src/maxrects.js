@@ -387,6 +387,12 @@ class MaxRectsBin {
         const bh = Math.max(1, newMaxY - newMinY);
         tier2 = (Math.min(bw, bh) / Math.max(bw, bh)) * binArea;
 
+        // Penalidade por rotação: quando a peça faz parte de um lote
+        // alinhado, rotacionar aumenta a dimensão errada.
+        if (this._alignAxis && cand.rotated) {
+          tier2 -= binArea * 0.08;
+        }
+
         // Bônus de alinhamento: se a peça tem mesma dimensão do
         // bloco, prefere continuar na mesma fileira (alignAxis='x')
         // ou coluna (alignAxis='y').
