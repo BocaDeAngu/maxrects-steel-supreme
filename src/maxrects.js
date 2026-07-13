@@ -41,12 +41,12 @@ function _estrategiaConfig(estrategia) {
   const e = [0, 1, 2, 3].includes(estrategia) ? estrategia : 0;
 
   switch (e) {
-    case 0: // largura — single vertical column (CNC: largura)
+    case 0: // largura — vertical column (CNC: largura)
       return {
         label: 'Largura',
-        sentido: 'comprimento', // vFirst → strips verticais → preenche Y no SVG = largura
+        sentido: 'comprimento',
         sortComparator:
-          (a, b) => (b.w * b.h) - (a.w * a.h) || a.h - b.h,
+          (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h),
         lookAhead: 3,
         splitBias: 50,
         tiers: {
@@ -58,10 +58,10 @@ function _estrategiaConfig(estrategia) {
         }
       };
 
-    case 1: // comprimento — single horizontal row (CNC: comprimento)
+    case 1: // comprimento — horizontal row (CNC: comprimento)
       return {
         label: 'Comprimento',
-        sentido: 'largura', // hFirst → strips horizontais → preenche X no SVG = comprimento
+        sentido: 'largura',
         sortComparator:
           (a, b) => (b.w * b.h) - (a.w * a.h) || a.w - b.w,
         lookAhead: 3,
@@ -75,35 +75,35 @@ function _estrategiaConfig(estrategia) {
         }
       };
 
-    case 2: // zigzag — multi-row grid, zigzag toolpath (CNC: aceitavel)
+    case 2: // zigzag — grid com alternância de direção
       return {
         label: 'ZigZag',
-        sentido: '',
+        sentido: 'comprimento',
         sortComparator:
           (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h),
-        lookAhead: 2,
-        splitBias: 0,
+        lookAhead: 1,
+        splitBias: 5,
         tiers: {
           tier2: { weight: 1.0, mode: 'brs' },
-          tier3: { weight: 0.1, mode: 'none' },
-          tier4: { weight: 0.02 },
-          tier5: { weight: 0.02 },
+          tier3: { weight: 0.05, mode: 'sentido' },
+          tier4: { weight: 0.05 },
+          tier5: { weight: 0.01 },
           tiebreaker: { weight: 0 }
         }
       };
 
-    case 3: // 1x1 — tight dense block (CNC: perfeito)
+    case 3: // 1×1 — bloco denso e compacto
       return {
         label: '1×1',
         sentido: '',
-        sortComparator: null, // use default area desc
+        sortComparator: null,
         lookAhead: 5,
         splitBias: 0,
         tiers: {
           tier2: { weight: 1.0, mode: 'brs' },
           tier3: { weight: 0 },
-          tier4: { weight: 0.05 },
-          tier5: { weight: 0.20 },
+          tier4: { weight: 0.10 },
+          tier5: { weight: 0.50 },
           tiebreaker: { weight: 0 }
         }
       };
