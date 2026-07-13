@@ -22,7 +22,7 @@
 
 /**
  * Maps estrategia (0|1|2|3) to a full algorithm configuration:
- *   sentido, sort order, lookAhead, split bias, and per-tier weights.
+ *   direcao, sort order, lookAhead, split bias, and per-tier weights.
  *
  * Each tier has a `weight` multiplier and optional `mode` string.
  *
@@ -32,77 +32,100 @@
  *   Tier 3 — alignment bonus (how well piece fills the dimension)
  *   Tier 4 — waste penalty (large free rect eaten by small piece)
  *   Tier 5 — squareness bonus (prefer splits leaving near-square rects)
- *   Tiebreaker — sentido-based position preference
+ *   Tiebreaker — direcao-based position preference
  *
- * @param {number} estrategia — 0=largura, 1=comprimento, 2=zigzag, 3=1x1
+ * @param {number} estrategia — 0=horizontal, 1=vertical, 2=zigzag, 3=1x1
  * @returns {object} config
  */
+const DEFAULT_TIERS = {
+  tier1: {},
+  tier2: { weight: 1.0, mode: 'brs' },
+  tier3: { weight: 0 },
+  tier4: { weight: 0.05 },
+  tier5: { weight: 0.02 },
+  tiebreaker: { weight: 0 }
+};
+
 function _estrategiaConfig(estrategia) {
   const e = [0, 1, 2, 3].includes(estrategia) ? estrategia : 0;
 
   switch (e) {
-    case 0: // largura — vertical column (CNC: largura)
+    case 0: // largura — coluna vertical (CNC: largura.CNC)
+      // direcao='vertical' → tier2 prefere Y maior (pra baixo) + hFirst → colunas
+      // sort por width DESC → peças mais largas primeiro, definem largura da coluna
+      // Greedy (lookAhead=0): cada peça vai pro espaço mais abaixo disponível
       return {
-        label: 'Largura',
-        sentido: 'comprimento',
+        label: 'Vertical',
+        direcao: 'vertical',
+        sortComparator:
+          (a, b) => b.w - a.w || (b.w * b.h) - (a.w * a.h),
+        lookAhead: 0,
+        splitBias: 100,
+        tiers: {
+          tier2: { weight: 10.0, mode: 'direcao' },
+          tier3: { weight: 0.5, mode: 'direcao' },
+          tier4: { weight: 0.05 },
+          tier5: { weight: 0.02 },
+          tiebreaker: { weight: 0.01, mode: 'direcao' }
+        }
+      };
+
+    case 1: // comprimento — fileira horizontal (CNC: comprimento.CNC)
+      // direcao='horizontal' → tier2 prefere X maior (pra direita) + vFirst → fileiras
+      // sort por height DESC → peças mais altas primeiro, definem altura da fileira
+      // Greedy (lookAhead=0): cada peça vai pro espaço mais à direita disponível
+      return {
+        label: 'Horizontal',
+        direcao: 'horizontal',
         sortComparator:
           (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h),
-        lookAhead: 3,
-        splitBias: 50,
+        lookAhead: 0,
+        splitBias: 100,
         tiers: {
-          tier2: { weight: 1.0, mode: 'sentido' },
-          tier3: { weight: 0.3, mode: 'sentido' },
+          tier2: { weight: 10.0, mode: 'direcao' },
+          tier3: { weight: 0.5, mode: 'direcao' },
           tier4: { weight: 0.05 },
-          tier5: { weight: 0.05 },
-          tiebreaker: { weight: 0.001, mode: 'sentido' }
+          tier5: { weight: 0.02 },
+          tiebreaker: { weight: 0.01, mode: 'direcao' }
         }
       };
 
-    case 1: // comprimento — horizontal row (CNC: comprimento)
-      return {
-        label: 'Comprimento',
-        sentido: 'largura',
-        sortComparator:
-          (a, b) => (b.w * b.h) - (a.w * a.h) || a.w - b.w,
-        lookAhead: 3,
-        splitBias: 50,
-        tiers: {
-          tier2: { weight: 1.0, mode: 'sentido' },
-          tier3: { weight: 0.3, mode: 'sentido' },
-          tier4: { weight: 0.05 },
-          tier5: { weight: 0.05 },
-          tiebreaker: { weight: 0.001, mode: 'sentido' }
-        }
-      };
-
-    case 2: // zigzag — grid com alternância de direção
+    case 2: // zigzag — alternância direita/baixo (CNC: ZigZig.CNC)
+      // Alterna direcao a cada peça colocada:
+      //   dir=1 (comprimento) → vFirst → expande pra DIREITA (fileira)
+      //   dir=-1 (largura)    → hFirst → expande pra BAIXO (coluna)
+      // Cria padrão serrilhado: →↓→↓→↓
       return {
         label: 'ZigZag',
-        sentido: 'comprimento',
+        direcao: 'horizontal',
         sortComparator:
-          (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h),
-        lookAhead: 1,
-        splitBias: 5,
+          (a, b) => (b.w * b.h) - (a.w * a.h) || b.h - a.h,
+        lookAhead: 0,
+        splitBias: 100,
+        zigzag: true,
         tiers: {
-          tier2: { weight: 1.0, mode: 'brs' },
-          tier3: { weight: 0.05, mode: 'sentido' },
+          tier2: { weight: 10.0, mode: 'zigzag' },
+          tier3: { weight: 0.2, mode: 'direcao' },
           tier4: { weight: 0.05 },
           tier5: { weight: 0.01 },
           tiebreaker: { weight: 0 }
         }
       };
 
-    case 3: // 1×1 — bloco denso e compacto
+    case 3: // 1×1 — bloco denso e compacto (CNC: 1x1.CNC)
+      // BRS puro com squareness forte + waste penalty alto
+      // sem split bias (neutro) — cada peça decide individualmente
+      // lookAhead alto para otimizar ocupação geral
       return {
         label: '1×1',
-        sentido: '',
+        direcao: '',
         sortComparator: null,
-        lookAhead: 5,
+        lookAhead: 10,
         splitBias: 0,
         tiers: {
           tier2: { weight: 1.0, mode: 'brs' },
           tier3: { weight: 0 },
-          tier4: { weight: 0.10 },
+          tier4: { weight: 0.20 },
           tier5: { weight: 0.50 },
           tiebreaker: { weight: 0 }
         }
@@ -120,27 +143,30 @@ class MaxRectsBin {
    * @param {number} height - Sheet height in mm
    * @param {object} [opts] - Configuration object
    * @param {number} [opts.margin=0]     - Gap between pieces
-   * @param {string} [opts.sentido='']   - 'largura'|'comprimento'|''
+   * @param {string} [opts.direcao='']   - 'vertical'|'horizontal'|''
    * @param {number} [opts.estrategia=0]  - 0|1|2|3 — packed into this config
    */
   constructor(width, height, opts = {}) {
     this.binW = width;
     this.binH = height;
     this.margin = opts.margin || 0;
-    this.sentido = opts.sentido || '';
+    this.direcao = opts.direcao || '';
     this.freeRects = [{ x: 0, y: 0, w: width, h: height }];
     this.placed = [];
 
-    // estrategia -1 = backward compat (classic sentido mode, no overrides)
+    // estrategia -1 = backward compat (classic direcao mode, no overrides)
     const est = [0, 1, 2, 3].includes(opts.estrategia) ? opts.estrategia : -1;
     this.estrategia = est;
     if (est >= 0) {
       const cfg = _estrategiaConfig(est);
       this._strategy = cfg;
-      this.sentido = cfg.sentido; // strategy sentido overrides passed sentido
+      this.direcao = cfg.direcao; // strategy direcao overrides passed direcao
     } else {
       this._strategy = null;
     }
+
+    // zigzag alternation direction: 1 = right/down, -1 = left/up
+    this._zigzagDir = 1;
   }
 
   /**
@@ -201,13 +227,25 @@ class MaxRectsBin {
     }
 
     // ── Place the piece ─────────────────────────────────────
+    // IMPORTANTE: quando rotacionado, o espaço ocupado tem dimensões TROCADAS
+    // (largura = altura original, altura = largura original).
+    // O split (pw/ph) já usa as dimensões da orientação escolhida,
+    // então o placedRect precisa refletir o espaço REALMENTE ocupado
+    // para que os free rects não sobreponham a peça.
     const placedRect = {
       x: best.px, y: best.py,
-      width: w, height: h,
+      width: best.rotated ? h : w,
+      height: best.rotated ? w : h,
       rotated: best.rotated
     };
     this.placed.push(placedRect);
     this._splitRect(best.frIdx, best.px, best.py, best.pw, best.ph);
+
+    // ZigZag: alterna direção da pontuação (direita↔esquerda) a cada peça
+    if (this._strategy?.zigzag) {
+      this._zigzagDir *= -1;
+    }
+
     return placedRect;
   }
 
@@ -222,27 +260,27 @@ class MaxRectsBin {
    * each estrategia to tune the scoring independently.
    *
    * Tier 1 — look-ahead future-fit count (dominant: binArea × 2 per piece).
-   * Tier 2 — spatial score: BRS (largest remaining rect) or sentido-directional.
+   * Tier 2 — spatial score: BRS (largest remaining rect) or direcao-directional.
    * Tier 3 — alignment bonus (piece fills the target dimension).
    * Tier 4 — waste penalty (large free rect consumed by small piece).
    * Tier 5 — squareness bonus (prefer splits leaving near-square rects).
-   * Tiebreaker — sentido position preference (tiny weight, only breaks ties).
+   * Tiebreaker — direcao position preference (tiny weight, only breaks ties).
    */
   _scoreCandidate(cand, { lookAhead, remaining, rotation }) {
     const fr = this.freeRects[cand.frIdx];
     const vSplits = this._genSplitV(fr, cand.px, cand.py, cand.pw, cand.ph);
     const hSplits = this._genSplitH(fr, cand.px, cand.py, cand.pw, cand.ph);
 
-    // Pick the better split (com bias suave de 5x para sentido)
+    // Pick the better split (com bias suave de 5x para direcao)
     let maxV = vSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
     let maxH = hSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
 
-    if (this.sentido === 'largura') maxV *= 5;
-    else if (this.sentido === 'comprimento') maxH *= 5;
+    if (this.direcao === 'vertical') maxV *= 5;
+    else if (this.direcao === 'horizontal') maxH *= 5;
 
     const splits = maxV <= maxH ? vSplits : hSplits;
     const binArea = this.binW * this.binH;
-    const T = this._strategy?.tiers || _estrategiaConfig(0).tiers;
+    const T = this._strategy?.tiers || DEFAULT_TIERS;
 
     // ── Tier 1: look-ahead (always active, high weight) ──
     let futureFitCount = 0;
@@ -268,10 +306,13 @@ class MaxRectsBin {
     let tier2 = 0;
     if (splits.length > 0) {
       const t2 = T.tier2;
-      if (t2?.mode === 'sentido' && this.sentido === 'largura') {
+      if (t2?.mode === 'direcao' && this.direcao === 'vertical') {
         tier2 = cand.py * binArea / this.binH;
-      } else if (t2?.mode === 'sentido' && this.sentido === 'comprimento') {
+      } else if (t2?.mode === 'direcao' && this.direcao === 'horizontal') {
         tier2 = cand.px * binArea / this.binW;
+      } else if (t2?.mode === 'zigzag') {
+        // ZigZag: alterna entre preferir X maior (dir=1) e X menor (dir=-1)
+        tier2 = cand.px * binArea / this.binW * this._zigzagDir;
       } else {
         // BRS clássico
         tier2 = splits.reduce((max, r) => Math.max(max, r.w * r.h), 0);
@@ -282,10 +323,10 @@ class MaxRectsBin {
     // ── Tier 3: alignment bonus ─────────────────────────
     let tier3 = 0;
     const t3 = T.tier3;
-    if (t3?.mode === 'sentido' && t3.weight > 0) {
-      if (this.sentido === 'largura') {
+    if (t3?.mode === 'direcao' && t3.weight > 0) {
+      if (this.direcao === 'vertical') {
         tier3 = (cand.pw / fr.w) * binArea * t3.weight;
-      } else if (this.sentido === 'comprimento') {
+      } else if (this.direcao === 'horizontal') {
         tier3 = (cand.ph / fr.h) * binArea * t3.weight;
       }
     }
@@ -316,12 +357,15 @@ class MaxRectsBin {
     // ── Tiebreaker ──────────────────────────────────────
     let tiebreaker = 0;
     const tb = T.tiebreaker;
-    if (tb?.weight && tb?.mode === 'sentido') {
-      if (this.sentido === 'largura') {
+    if (tb?.weight && tb?.mode === 'direcao') {
+      if (this.direcao === 'vertical') {
         tiebreaker = -cand.py * tb.weight;
-      } else if (this.sentido === 'comprimento') {
+      } else if (this.direcao === 'horizontal') {
         tiebreaker = -cand.px * tb.weight;
       }
+    } else if (tb?.weight && tb?.mode === 'zigzag') {
+      // ZigZag: alterna entre preferir X maior (dir=1) e X menor (dir=-1)
+      tiebreaker = cand.px * this._zigzagDir * tb.weight;
     }
 
     return tier1 + tier2 + tier3 + tier4 + tier5 + tiebreaker;
@@ -337,7 +381,7 @@ class MaxRectsBin {
 
     // Try both split strategies and pick the one with
     // the smaller maximum individual rect (less fragmentation).
-    // sentido bias tilts the choice when the sizes are close.
+    // direcao bias tilts the choice when the sizes are close.
     const vFirst = this._genSplitV(fr, px, py, pw, ph);
     const hFirst = this._genSplitH(fr, px, py, pw, ph);
 
@@ -351,8 +395,8 @@ class MaxRectsBin {
     //   neutral (0) → pure geometric BRS decides
     const sb = this._strategy?.splitBias ?? 0;
     if (sb > 0) {
-      if (this.sentido === 'largura') maxV *= sb;
-      else if (this.sentido === 'comprimento') maxH *= sb;
+      if (this.direcao === 'vertical') maxV *= sb;
+      else if (this.direcao === 'horizontal') maxH *= sb;
     }
 
     const chosen = maxV <= maxH ? vFirst : hFirst;
@@ -496,7 +540,7 @@ function _callKey(pieces, sheetW, sheetH, opts) {
   h += '|r=' + (opts.rotation !== false);
   h += '|m=' + (opts.margin || 0);
   h += '|b=' + (opts.borda_mm || 0);
-  h += '|s=' + (opts.sentido || '');
+  h += '|s=' + (opts.direcao || '');
   h += '|e=' + (opts.estrategia != null ? opts.estrategia : '-1');
   h += '|l=' + (opts.lookAhead !== undefined ? opts.lookAhead : 1);
   h += '|d=' + (parseFloat(opts.densidade) || 0);
@@ -549,7 +593,7 @@ const _CACHE_MAX = 100;
  * @param {number}  [opts.densidade=0]       - Material density g/cm³ (0 = skip). Steel ≈ 7.85
  * @param {number}  [opts.velocidadeCorte=0] - Cutting constant mm²/min (0 = skip). Formula: perim / (K / esp)
  * @param {number}  [opts.areaMinRetalho=0]  - Min waste area in mm² (0 = skip retalhos)
- * @param {string}  [opts.sentido='']        - Nesting sense: '' (auto), 'largura' (prefer width), 'comprimento' (prefer height)
+ * @param {string}  [opts.direcao='']        - Nesting sense: '' (auto), 'vertical' (prefer width), 'horizontal' (prefer height)
  * @param {number}  [opts.repeticoes=0]      - 0 = each sheet returned individually (default). 1 = collapse identical layouts, counter tracks repetitions.
  *
  * Each returned sheet has `vezes_cortada` — how many physical copies of this layout are needed.
@@ -597,19 +641,21 @@ function nest(pieces, sheetW, sheetH, opts = {}) {
 function _run(pieces, sheetDescriptors, opts) {
   const rotation = opts.rotation !== false;
   const margin = Math.max(0, opts.margin || 0);
-  const lookAhead = opts.lookAhead !== undefined ? opts.lookAhead : 1;
   const bordaMm = Math.max(0, opts.borda_mm || 0);
   const densidade = parseFloat(opts.densidade) || 0;
   const velocidadeCorte = parseFloat(opts.velocidadeCorte) || 0;
   const areaMinRetalho = Math.max(0, parseInt(opts.areaMinRetalho, 10) || 0);
-  const sentido = ['largura', 'comprimento'].includes(opts.sentido) ? opts.sentido : '';
+  const direcao = ['vertical', 'horizontal'].includes(opts.direcao) ? opts.direcao : '';
   const estrategia = [0, 1, 2, 3].includes(opts.estrategia) ? opts.estrategia : -1;
 
-  // When estrategia is set (0-3), load its config and override sentido
+  // When estrategia is set (0-3), load its config and override direcao
   const strategyCfg = estrategia >= 0 ? _estrategiaConfig(estrategia) : null;
 
+  // Estrategia define lookAhead greedy (0) vs BRS (10); opts.lookAhead sobrepõe
+  const lookAhead = opts.lookAhead !== undefined ? opts.lookAhead : (strategyCfg?.lookAhead ?? 1);
+
   if (estrategia >= 0) {
-    console.log('[estrategia] usando estrategia=' + estrategia + ' (' + (strategyCfg?.label || '?') + ') sentido=' + (strategyCfg?.sentido || ''));
+    console.log('[estrategia] usando estrategia=' + estrategia + ' (' + (strategyCfg?.label || '?') + ') direcao=' + (strategyCfg?.direcao || ''));
   }
 
   const { sortByAreaDesc } = require('./sort');
@@ -632,13 +678,13 @@ function _run(pieces, sheetDescriptors, opts) {
   }
 
   // Sort: estrategia provides its own sort comparator;
-  // fallback to sentido-based sorting for backward compat.
+  // fallback to direcao-based sorting for backward compat.
   let sorted;
   if (strategyCfg?.sortComparator) {
     sorted = [...expanded].sort(strategyCfg.sortComparator);
-  } else if (sentido === 'largura') {
+  } else if (direcao === 'vertical') {
     sorted = [...expanded].sort((a, b) => (b.w * b.h) - (a.w * a.h) || a.h - b.h);
-  } else if (sentido === 'comprimento') {
+  } else if (direcao === 'horizontal') {
     sorted = [...expanded].sort((a, b) => (b.w * b.h) - (a.w * a.h) || a.w - b.w);
   } else {
     sorted = sortByAreaDesc(expanded);
@@ -712,7 +758,7 @@ function _run(pieces, sheetDescriptors, opts) {
         if (groupSheets.length > 1) remaining = _origRemaining.slice(); else break;
       }
 
-      const bin = new MaxRectsBin(effW, effH, { margin, sentido, estrategia });
+      const bin = new MaxRectsBin(effW, effH, { margin, direcao, estrategia });
       const placed = [];
       const stillRemaining = [];
 
