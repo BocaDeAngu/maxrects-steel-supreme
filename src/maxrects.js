@@ -608,6 +608,10 @@ function _run(pieces, sheetDescriptors, opts) {
   // When estrategia is set (0-3), load its config and override sentido
   const strategyCfg = estrategia >= 0 ? _estrategiaConfig(estrategia) : null;
 
+  if (estrategia >= 0) {
+    console.log('[estrategia] usando estrategia=' + estrategia + ' (' + (strategyCfg?.label || '?') + ') sentido=' + (strategyCfg?.sentido || ''));
+  }
+
   const { sortByAreaDesc } = require('./sort');
 
   // Expand quantities, carrying extra fields
