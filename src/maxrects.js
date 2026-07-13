@@ -44,7 +44,7 @@ function _estrategiaConfig(estrategia) {
     case 0: // largura — single vertical column (CNC: largura)
       return {
         label: 'Largura',
-        sentido: 'largura',
+        sentido: 'comprimento', // vFirst → strips verticais → preenche Y no SVG = largura
         sortComparator:
           (a, b) => (b.w * b.h) - (a.w * a.h) || a.h - b.h,
         lookAhead: 3,
@@ -61,7 +61,7 @@ function _estrategiaConfig(estrategia) {
     case 1: // comprimento — single horizontal row (CNC: comprimento)
       return {
         label: 'Comprimento',
-        sentido: 'comprimento',
+        sentido: 'largura', // hFirst → strips horizontais → preenche X no SVG = comprimento
         sortComparator:
           (a, b) => (b.w * b.h) - (a.w * a.h) || a.w - b.w,
         lookAhead: 3,
