@@ -8,4 +8,20 @@ function sortByAreaDesc(pieces) {
   return [...pieces].sort((a, b) => (b.w * b.h) - (a.w * a.h));
 }
 
-module.exports = { sortByAreaDesc };
+/**
+ * Sort pieces by height ascending — shelf-friendly for `sentido: largura`.
+ * Short pieces first creates compact rows that consume the full width.
+ */
+function sortByHeightAsc(pieces) {
+  return [...pieces].sort((a, b) => a.h - b.h || (b.w * b.h) - (a.w * a.h));
+}
+
+/**
+ * Sort pieces by width ascending — column-friendly for `sentido: comprimento`.
+ * Narrow pieces first creates compact columns that consume the full height.
+ */
+function sortByWidthAsc(pieces) {
+  return [...pieces].sort((a, b) => a.w - b.w || (b.w * b.h) - (a.w * a.h));
+}
+
+module.exports = { sortByAreaDesc, sortByWidthAsc, sortByHeightAsc };

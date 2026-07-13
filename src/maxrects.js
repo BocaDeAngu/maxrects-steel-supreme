@@ -110,18 +110,24 @@ class MaxRectsBin {
    *   (up to `lookAhead` depth). Each piece that fits adds
    *   `binArea × 2` to the score, so this dominates Tier 2.
    *
-   * Tier 2 — BRS: area of the largest remaining free rect.
-   *   Used as tiebreaker when multiple placements fit the same
-   *   number of future pieces.
+   * Tier 2 — BRS (largest remaining rect) for automatic mode;
+   *   SRS (smallest remaining rect) for sentido modes — fills gaps first,
+   *   which consumes the target dimension (width for largura, height for comprimento).
    */
   _scoreCandidate(cand, { lookAhead, remaining, rotation }) {
     const fr = this.freeRects[cand.frIdx];
     const vSplits = this._genSplitV(fr, cand.px, cand.py, cand.pw, cand.ph);
     const hSplits = this._genSplitH(fr, cand.px, cand.py, cand.pw, cand.ph);
 
-    // Pick the better split (same logic as _splitRect)
-    const maxV = vSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
-    const maxH = hSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
+    // Pick the better split (same logic as _splitRect, including sentido bias)
+    let maxV = vSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
+    let maxH = hSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
+
+    // sentido: largura (Y) → penaliza V → hFirst (preenche X do alg = Y do SVG = largura)
+    //          comprimento (X) → penaliza H → vFirst (preenche Y do alg = X do SVG = comprimento)
+    if (this.sentido === 'largura') maxV *= 1.15;
+    else if (this.sentido === 'comprimento') maxH *= 1.15;
+
     const splits = maxV <= maxH ? vSplits : hSplits;
 
     const binArea = this.binW * this.binH;
@@ -153,10 +159,19 @@ class MaxRectsBin {
       }
     }
 
-    // ── Tier 2: BRS — largest remaining rect area ──────────
-    const brs = splits.reduce((max, r) => Math.max(max, r.w * r.h), 0);
+    // ── Tier 2: BRS (auto) / SRS (sentido) — remaining rect area ──
+    let brs;
+    if (splits.length === 0) {
+      brs = 0;
+    } else if (this.sentido === 'largura' || this.sentido === 'comprimento') {
+      // SRS: smallest remaining space — preenche gaps primeiro = consome direção
+      brs = -splits.reduce((min, r) => Math.min(min, r.w * r.h), Infinity);
+    } else {
+      // BRS: largest remaining space (padrão MaxRects)
+      brs = splits.reduce((max, r) => Math.max(max, r.w * r.h), 0);
+    }
 
-    // Tier 1 dominates (binArea × 2 per future piece > any BRS)
+    // Tier 1 dominates (binArea × 2 per future piece > any BRS/SRS)
     return futureFitCount * binArea * 2 + brs;
   }
 
@@ -177,10 +192,10 @@ class MaxRectsBin {
     let maxV = vFirst.reduce((m, r) => Math.max(m, r.w * r.h), 0);
     let maxH = hFirst.reduce((m, r) => Math.max(m, r.w * r.h), 0);
 
-    // sentido: largura → prefer vertical-first (full-width bottom strip → horizontal rows)
-    //           comprimento → prefer horizontal-first (full-height right strip → vertical columns)
-    if (this.sentido === 'largura') maxH *= 1.15;  // penalize H, prefer V
-    else if (this.sentido === 'comprimento') maxV *= 1.15;  // penalize V, prefer H
+    // sentido: largura (Y) → penaliza V → hFirst (preenche X do alg = Y do SVG = largura)
+    //          comprimento (X) → penaliza H → vFirst (preenche Y do alg = X do SVG = comprimento)
+    if (this.sentido === 'largura') maxV *= 1.15;
+    else if (this.sentido === 'comprimento') maxH *= 1.15;
 
     const chosen = maxV <= maxH ? vFirst : hFirst;
 
@@ -430,7 +445,7 @@ function _run(pieces, sheetDescriptors, opts) {
   const areaMinRetalho = Math.max(0, parseInt(opts.areaMinRetalho, 10) || 0);
   const sentido = ['largura', 'comprimento'].includes(opts.sentido) ? opts.sentido : '';
 
-  const { sortByAreaDesc } = require('./sort');
+  const { sortByAreaDesc, sortByWidthAsc, sortByHeightAsc } = require('./sort');
 
   // Expand quantities, carrying extra fields
   const expanded = [];
@@ -449,7 +464,11 @@ function _run(pieces, sheetDescriptors, opts) {
     }
   }
 
-  const sorted = sortByAreaDesc(expanded);
+  // Sort: sentido orienta a ordenação para consumir a dimensão desejada
+  let sorted;
+  if (sentido === 'largura') sorted = sortByHeightAsc(expanded);
+  else if (sentido === 'comprimento') sorted = sortByWidthAsc(expanded);
+  else sorted = sortByAreaDesc(expanded);
 
   if (sorted.length === 0) {
     return {
