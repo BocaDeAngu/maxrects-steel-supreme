@@ -113,17 +113,16 @@ function _estrategiaConfig(estrategia) {
       };
 
     case 3: // 1×1 — bloco denso e compacto (CNC: 1x1.CNC)
-      // Modo 'square': maximiza quadratura do bounding box a cada
-      // inserção. Sort ascendente (pequenas 1º). Proximity penalty
-      // evita dispersão. Waste + squareness extras como reforço.
+      // Modo 'square': maximiza quadratura do bounding box de todas
+      // as peças. Sort descendente (G 1º, pequenas depois) — cada
+      // peça menor decide direção contra o bbox já distribuído.
       return {
         label: '1×1',
         direcao: '',
-        sortComparator: (a, b) => (a.w * a.h) - (b.w * b.h),
+        sortComparator: (a, b) => (b.w * b.h) - (a.w * a.h),
         lookAhead: 0,
         splitBias: 0,
         zigzag: false,
-        proximityWeight: 3.0,
         tiers: {
           tier2: { weight: 10.0, mode: 'square' },
           tier3: { weight: 0 },
@@ -175,6 +174,10 @@ class MaxRectsBin {
     this._bboxMinY = Infinity;
     this._bboxMaxX = -Infinity;
     this._bboxMaxY = -Infinity;
+    this._alignAxis = null;   // 'x' (horizontal row) or 'y' (vertical column)
+    this._alignW = 0;         // piece width  that triggered alignment
+    this._alignH = 0;         // piece height that triggered alignment
+    this._alignAnchorPos = -1; // py (alignAxis='x') ou px (alignAxis='y')
   }
 
   /**
@@ -257,6 +260,11 @@ class MaxRectsBin {
     const bb = best.py + best.ph;
     if (br > this._bboxMaxX) this._bboxMaxX = br;
     if (bb > this._bboxMaxY) this._bboxMaxY = bb;
+
+    // Square mode: ancora posição da 1ª peça do lote
+    if (this._alignAxis && this._alignAnchorPos < 0) {
+      this._alignAnchorPos = (this._alignAxis === 'x') ? best.py : best.px;
+    }
 
     // ZigZag: alterna direção da pontuação (→↔↓) a cada peça
     if (this._strategy?.zigzag) {
@@ -349,8 +357,28 @@ class MaxRectsBin {
           }
         }
       } else if (t2?.mode === 'square') {
+        // ── Heurística de direção do bloco ─────────────────
+        // Antes da 1ª peça pequena, decide direção comparando
+        // o bloco total (count * peça) contra a maior dimensão
+        // já distribuída (anchor). Escolhe a direção cuja soma
+        // mais se aproxima da dimensão do anchor.
+        if (this._alignAxis === null && this._lastPx >= 0 && remaining.length > 0) {
+          const count = remaining.length + 1;  // +1 p/ peça atual
+          const repW = remaining[0].w;
+          const repH = remaining[0].h;
+          const totalRow = count * repW;   // largura se fileira
+          const totalCol = count * repH;   // altura se coluna
+          const anchorDim = Math.max(
+            this._bboxMaxX - this._bboxMinX,
+            this._bboxMaxY - this._bboxMinY
+          );
+          this._alignAxis = Math.abs(totalRow - anchorDim) <= Math.abs(totalCol - anchorDim)
+            ? 'x' : 'y';
+          this._alignW = repW;
+          this._alignH = repH;
+        }
+
         // Squareness do bounding box após colocar esta peça.
-        // Quanto mais quadrado o bbox resultante, maior o score.
         const newMinX = Math.min(this._bboxMinX, cand.px);
         const newMinY = Math.min(this._bboxMinY, cand.py);
         const newMaxX = Math.max(this._bboxMaxX, cand.px + cand.pw);
@@ -358,11 +386,34 @@ class MaxRectsBin {
         const bw = Math.max(1, newMaxX - newMinX);
         const bh = Math.max(1, newMaxY - newMinY);
         tier2 = (Math.min(bw, bh) / Math.max(bw, bh)) * binArea;
-        // Penalidade de proximidade p/ evitar dispersão
-        if (this._strategy?.proximityWeight && this._lastPx >= 0) {
-          const prox = this._strategy.proximityWeight;
-          tier2 -= Math.abs(cand.px - this._lastPx) * binArea / this.binW * prox;
-          tier2 -= Math.abs(cand.py - this._lastPy) * binArea / this.binH * prox;
+
+        // Bônus de alinhamento: se a peça tem mesma dimensão do
+        // bloco, prefere continuar na mesma fileira (alignAxis='x')
+        // ou coluna (alignAxis='y').
+        if (this._alignAxis && this._lastPx >= 0) {
+          const candW = cand.rotated ? cand.ph - this.margin : cand.pw - this.margin;
+          const candH = cand.rotated ? cand.pw - this.margin : cand.ph - this.margin;
+          if (candW === this._alignW && candH === this._alignH) {
+            // Posição esperada do lote:
+            //   'x' = abaixo do anchor (py ≈ bboxMaxY)
+            //   'y' = à direita do anchor (px ≈ bboxMaxX)
+            // Na 1ª peça, usa o bbox; nas seguintes, usa _alignAnchorPos
+            if (this._alignAxis === 'x') {
+              const expectedY = this._alignAnchorPos >= 0
+                ? this._alignAnchorPos
+                : this._bboxMaxY;
+              if (Math.abs(cand.py - expectedY) <= this.margin) {
+                tier2 += binArea * 0.5;
+              }
+            } else {
+              const expectedX = this._alignAnchorPos >= 0
+                ? this._alignAnchorPos
+                : this._bboxMaxX;
+              if (Math.abs(cand.px - expectedX) <= this.margin) {
+                tier2 += binArea * 0.5;
+              }
+            }
+          }
         }
       } else {
         // BRS clássico
