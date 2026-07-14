@@ -34,7 +34,7 @@
  *   Tier 5 — squareness bonus (prefer splits leaving near-square rects)
  *   Tiebreaker — direcao-based position preference
  *
- * @param {number} estrategia — 0=horizontal, 1=vertical, 2=zigzag, 3=1x1
+ * @param {number} estrategia — 0=Vertical, 1=Horizontal, 2=Retângulo, 3=Quadrado
  * @returns {object} config
  */
 const DEFAULT_TIERS = {
@@ -50,84 +50,71 @@ function _estrategiaConfig(estrategia) {
   const e = [0, 1, 2, 3].includes(estrategia) ? estrategia : 0;
 
   switch (e) {
-    case 0: // largura — coluna vertical (CNC: largura.CNC)
-      // direcao='vertical' → tier2 prefere Y maior (pra baixo) + hFirst → colunas
-      // sort por width DESC → peças mais largas primeiro, definem largura da coluna
-      // Greedy (lookAhead=0): cada peça vai pro espaço mais abaixo disponível
+    case 0: // Vertical — colunas compactas (muitas peças)
       return {
         label: 'Vertical',
         direcao: 'vertical',
         sortComparator:
           (a, b) => b.w - a.w || (b.w * b.h) - (a.w * a.h),
-        lookAhead: 0,
-        splitBias: 100,
+        lookAhead: 1,
+        splitBias: 30,
         tiers: {
-          tier2: { weight: 10.0, mode: 'direcao' },
-          tier3: { weight: 0.5, mode: 'direcao' },
-          tier4: { weight: 0.05 },
-          tier5: { weight: 0.02 },
+          tier2: { weight: 12.0, mode: 'density' },
+          tier3: { weight: 1.0, mode: 'direcao' },
+          tier4: { weight: 1.0 },
+          tier5: { weight: 0.2 },
           tiebreaker: { weight: 0.01, mode: 'direcao' }
         }
       };
 
-    case 1: // comprimento — fileira horizontal (CNC: comprimento.CNC)
-      // direcao='horizontal' → tier2 prefere X maior (pra direita) + vFirst → fileiras
-      // sort por height DESC → peças mais altas primeiro, definem altura da fileira
-      // Greedy (lookAhead=0): cada peça vai pro espaço mais à direita disponível
+    case 1: // Horizontal — fileiras compactas (muitas peças)
       return {
         label: 'Horizontal',
         direcao: 'horizontal',
         sortComparator:
           (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h),
-        lookAhead: 0,
-        splitBias: 100,
+        lookAhead: 2,
+        splitBias: 50,
         tiers: {
-          tier2: { weight: 10.0, mode: 'direcao' },
-          tier3: { weight: 0.5, mode: 'direcao' },
-          tier4: { weight: 0.05 },
-          tier5: { weight: 0.02 },
+          tier2: { weight: 10.0, mode: 'density' },
+          tier3: { weight: 1.0, mode: 'direcao' },
+          tier4: { weight: 1.0 },
+          tier5: { weight: 0.1 },
           tiebreaker: { weight: 0.01, mode: 'direcao' }
         }
       };
 
-    case 2: // zigzag — alternância direita/baixo (CNC: ZigZig.CNC)
-      // Alterna direcao a cada peça colocada:
-      //   dir=1 (comprimento) → vFirst → expande pra DIREITA (fileira)
-      //   dir=-1 (largura)    → hFirst → expande pra BAIXO (coluna)
-      // Cria padrão serrilhado: →↓→↓→↓
+    case 2: // Retângulo — BAF + anti-gap
+      // BAF (Best Area Fit): peça grande→espaço grande, peça pequena→espaço pequeno.
+      // Minimiza leftover, reduz fragmentação.
       return {
-        label: 'ZigZag',
-        direcao: 'horizontal',
-        sortComparator:
-          (a, b) => (b.w * b.h) - (a.w * a.h) || b.h - a.h,
-        lookAhead: 0,
-        splitBias: 100,
-        zigzag: true,
+        label: 'Retângulo',
+        direcao: '',
+        sortComparator: (a, b) => (b.w * b.h) - (a.w * a.h),
+        lookAhead: 2,
+        splitBias: 50,
         tiers: {
-          tier2: { weight: 10.0, mode: 'zigzag' },
-          tier3: { weight: 0.2, mode: 'direcao' },
-          tier4: { weight: 0.05 },
-          tier5: { weight: 0.10 },   // squareness ajuda agrupar
+          tier2: { weight: 1.0, mode: 'baf' },
+          tier3: { weight: 0 },
+          tier4: { weight: 0.5 },
+          tier5: { weight: 3.0 },
           tiebreaker: { weight: 0 }
         }
       };
 
-    case 3: // 1×1 — bloco denso e compacto (CNC: 1x1.CNC)
-      // Modo 'square': maximiza quadratura do bounding box de todas
-      // as peças. Sort descendente (G 1º, pequenas depois) — cada
-      // peça menor decide direção contra o bbox já distribuído.
+    case 3: // Quadrado — BAF + anti-gap forte
       return {
-        label: '1×1',
+        label: 'Quadrado',
         direcao: '',
-        sortComparator: (a, b) => (b.w * b.h) - (a.w * a.h),
-        lookAhead: 0,
+        sortComparator:
+          (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h),
+        lookAhead: 3,
         splitBias: 0,
-        zigzag: false,
         tiers: {
-          tier2: { weight: 10.0, mode: 'square' },
+          tier2: { weight: 1.0, mode: 'baf' },
           tier3: { weight: 0 },
-          tier4: { weight: 0.50 },
-          tier5: { weight: 2.0 },
+          tier4: { weight: 1.0 },
+          tier5: { weight: 5.0 },
           tiebreaker: { weight: 0 }
         }
       };
@@ -145,7 +132,11 @@ class MaxRectsBin {
    * @param {object} [opts] - Configuration object
    * @param {number} [opts.margin=0]     - Gap between pieces
    * @param {string} [opts.direcao='']   - 'vertical'|'horizontal'|''
-   * @param {number} [opts.estrategia=0]  - 0|1|2|3 — packed into this config
+   * @param {number} [opts.estrategia=0]  - 0=Vertical, 1=Horizontal, 2=Retângulo, 3=Quadrado
+   * @param {object} [opts.tiers]        - Override tiers for the strategy
+   * @param {string} [opts.sortMode]     - Override sort mode
+   * @param {number} [opts.splitBias]    - Override split bias
+   * @param {number} [opts.lookAheadOverride] - Override look-ahead depth
    */
   constructor(width, height, opts = {}) {
     this.binW = width;
@@ -162,22 +153,75 @@ class MaxRectsBin {
       const cfg = _estrategiaConfig(est);
       this._strategy = cfg;
       this.direcao = cfg.direcao; // strategy direcao overrides passed direcao
+
+      // Aplica overrides externos (disputa de agents)
+      if (opts.tiers) {
+        this._strategy.tiers = opts.tiers;
+      }
+      if (opts.sortMode) {
+        const sortFns = {
+          'area-desc': (a, b) => (b.w * b.h) - (a.w * a.h),
+          'width-desc': (a, b) => b.w - a.w || (b.w * b.h) - (a.w * a.h),
+          'height-desc': (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h)
+        };
+        if (sortFns[opts.sortMode]) {
+          this._strategy.sortComparator = sortFns[opts.sortMode];
+        }
+      }
+      if (opts.splitBias !== undefined) {
+        this._strategy.splitBias = opts.splitBias;
+      }
+      if (opts.lookAheadOverride !== undefined) {
+        this._strategy.lookAhead = opts.lookAheadOverride;
+      }
     } else {
       this._strategy = null;
     }
 
-    // zigzag alternation direction: 1 = right/down, -1 = left/up
-    this._zigzagDir = 1;
     this._lastPx = -1;
     this._lastPy = -1;
     this._bboxMinX = Infinity;
     this._bboxMinY = Infinity;
     this._bboxMaxX = -Infinity;
     this._bboxMaxY = -Infinity;
+    this._placedArea = 0;     // soma das áreas das peças colocadas (para density scoring)
     this._alignAxis = null;   // 'x' (horizontal row) or 'y' (vertical column)
     this._alignW = 0;         // piece width  that triggered alignment
     this._alignH = 0;         // piece height that triggered alignment
     this._alignAnchorPos = -1; // py (alignAxis='x') ou px (alignAxis='y')
+
+    // Zona de trabalho (anti-espalhamento horizontal)
+    this._zonaPct = opts.zonaPct || 80;
+  }
+
+  /**
+   * Deep clone this bin — usado pelo Beam Search para bifurcar caminhos.
+   */
+  clone() {
+    const c = Object.create(MaxRectsBin.prototype);
+    c.binW = this.binW;
+    c.binH = this.binH;
+    c.margin = this.margin;
+    c.direcao = this.direcao;
+    c.estrategia = this.estrategia;
+    c.freeRects = this.freeRects.map(r => ({ ...r }));
+    c.placed = this.placed.map(p => ({ ...p }));
+    c._placedArea = this._placedArea;
+    c._bboxMinX = this._bboxMinX;
+    c._bboxMinY = this._bboxMinY;
+    c._bboxMaxX = this._bboxMaxX;
+    c._bboxMaxY = this._bboxMaxY;
+    c._lastPx = this._lastPx;
+    c._lastPy = this._lastPy;
+    c._alignAxis = this._alignAxis;
+    c._alignW = this._alignW;
+    c._alignH = this._alignH;
+    c._alignAnchorPos = this._alignAnchorPos;
+    c._strategy = this._strategy
+      ? JSON.parse(JSON.stringify(this._strategy))
+      : null;
+    c._zonaPct = this._zonaPct;
+    return c;
   }
 
   /**
@@ -250,6 +294,7 @@ class MaxRectsBin {
       rotated: best.rotated
     };
     this.placed.push(placedRect);
+    this._placedArea += placedRect.width * placedRect.height;
     this._splitRect(best.frIdx, best.px, best.py, best.pw, best.ph);
 
     this._lastPx = best.px;
@@ -264,11 +309,6 @@ class MaxRectsBin {
     // Square mode: ancora posição da 1ª peça do lote
     if (this._alignAxis && this._alignAnchorPos < 0) {
       this._alignAnchorPos = (this._alignAxis === 'x') ? best.py : best.px;
-    }
-
-    // ZigZag: alterna direção da pontuação (→↔↓) a cada peça
-    if (this._strategy?.zigzag) {
-      this._zigzagDir *= -1;
     }
 
     return placedRect;
@@ -300,10 +340,7 @@ class MaxRectsBin {
     let maxV = vSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
     let maxH = hSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
 
-    if (this._strategy?.zigzag) {
-      if (this._zigzagDir > 0) maxH *= 5;   // → phase: vFirst chosen
-      else maxV *= 5;                        // ↓ phase: hFirst chosen
-    } else if (this.direcao === 'vertical') {
+    if (this.direcao === 'vertical') {
       maxV *= 5;
     } else if (this.direcao === 'horizontal') {
       maxH *= 5;
@@ -341,21 +378,6 @@ class MaxRectsBin {
         tier2 = cand.py * binArea / this.binH;
       } else if (t2?.mode === 'direcao' && this.direcao === 'horizontal') {
         tier2 = cand.px * binArea / this.binW;
-      } else if (t2?.mode === 'zigzag') {
-        // ZigZag: alterna entre expandir p/ direita (→) e p/ baixo (↓)
-        // com penalidade de proximidade p/ evitar saltos desconectados
-        const prox = this._strategy?.proximityWeight ?? 1.2;
-        if (this._zigzagDir > 0) {
-          tier2 = cand.px * binArea / this.binW;   // → phase: prefer X (right)
-          if (this._lastPx >= 0) {
-            tier2 -= Math.abs(cand.py - this._lastPy) * binArea / this.binH * prox;
-          }
-        } else {
-          tier2 = cand.py * binArea / this.binH;   // ↓ phase: prefer Y (down)
-          if (this._lastPx >= 0) {
-            tier2 -= Math.abs(cand.px - this._lastPx) * binArea / this.binW * prox;
-          }
-        }
       } else if (t2?.mode === 'square') {
         // ── Heurística de direção do bloco ─────────────────
         // Antes da 1ª peça pequena, decide direção comparando
@@ -421,6 +443,28 @@ class MaxRectsBin {
             }
           }
         }
+      } else if (t2?.mode === 'density') {
+        // ── Densidade do bounding box ──────────────────────
+        // Score = (área total colocada) / (área do bbox resultante).
+        // Quanto mais compacto o agrupamento, maior o score.
+        // Isso penaliza espalhamento desnecessário dentro da chapa.
+        const newMinX = Math.min(this._bboxMinX, cand.px);
+        const newMinY = Math.min(this._bboxMinY, cand.py);
+        const newMaxX = Math.max(this._bboxMaxX, cand.px + cand.pw);
+        const newMaxY = Math.max(this._bboxMaxY, cand.py + cand.ph);
+        const bboxW = Math.max(1, newMaxX - newMinX);
+        const bboxH = Math.max(1, newMaxY - newMinY);
+        const totalArea = this._placedArea + cand.pw * cand.ph;
+        tier2 = (totalArea / (bboxW * bboxH)) * binArea;
+      } else if (t2?.mode === 'baf') {
+        // ── Best Area Fit (BAF) normalizado ────────────────
+        // Prefere colocação onde a peça preenche a maior proporção
+        // do retângulo livre. pieceArea/freeArea = 1 = perfeito.
+        // Normalizado por binArea para escala comparável com outros tiers.
+        const freeArea = Math.max(1, fr.w * fr.h);
+        const pieceArea = cand.pw * cand.ph;
+        const fitRatio = pieceArea / freeArea; // 0..1, maior = melhor
+        tier2 = fitRatio * binArea;
       } else {
         // BRS clássico
         tier2 = splits.reduce((max, r) => Math.max(max, r.w * r.h), 0);
@@ -432,12 +476,9 @@ class MaxRectsBin {
     let tier3 = 0;
     const t3 = T.tier3;
     if (t3?.mode === 'direcao' && t3.weight > 0) {
-      const dir = this._strategy?.zigzag
-        ? (this._zigzagDir > 0 ? 'horizontal' : 'vertical')
-        : this.direcao;
-      if (dir === 'vertical') {
+      if (this.direcao === 'vertical') {
         tier3 = (cand.pw / fr.w) * binArea * t3.weight;
-      } else if (dir === 'horizontal') {
+      } else if (this.direcao === 'horizontal') {
         tier3 = (cand.ph / fr.h) * binArea * t3.weight;
       }
     }
@@ -454,16 +495,26 @@ class MaxRectsBin {
       tier4 = -Math.log10(Math.max(1, ratio)) * binArea * t4.weight;
     }
 
-    // ── Tier 5: squareness bonus ────────────────────────
+    // ── Tier 5: squareness bonus + anti-gap ─────────────
+    // Squareness: prefere splits que deixam retângulos aproximadamente
+    // quadrados (aspect ratio ~1.0). Penaliza splits que criam "tiras"
+    // (aspect ratio extremo < 1:4 ou > 4:1), que geram espaço inútil
+    // dentro do bbox da distribuição.
     let tier5 = 0;
     const t5 = T.tier5;
     if (t5?.weight && splits.length > 0) {
       let sqSum = 0;
+      let stripCount = 0;
       for (const s of splits) {
         const aspect = Math.min(s.w, s.h) / Math.max(s.w, s.h);
         sqSum += aspect * aspect;
+        // Anti-gap: conta quantos splits são "tiras" (aspect < 1:4)
+        if (aspect < 0.25) stripCount++;
       }
-      tier5 = (sqSum / splits.length) * binArea * t5.weight;
+      const avgSquare = sqSum / splits.length;
+      // Cada tira reduz 25% do bonus (max 100%)
+      const stripPenalty = Math.min(1, stripCount * 0.25);
+      tier5 = avgSquare * (1 - stripPenalty) * binArea * t5.weight;
     }
 
     // ── Tiebreaker ──────────────────────────────────────
@@ -474,13 +525,6 @@ class MaxRectsBin {
         tiebreaker = -cand.py * tb.weight;
       } else if (this.direcao === 'horizontal') {
         tiebreaker = -cand.px * tb.weight;
-      }
-    } else if (tb?.weight && tb?.mode === 'zigzag') {
-      // ZigZag: prefere X menor na → phase, Y menor na ↓ phase
-      if (this._zigzagDir > 0) {
-        tiebreaker = -cand.px * tb.weight;
-      } else {
-        tiebreaker = -cand.py * tb.weight;
       }
     }
 
@@ -511,10 +555,7 @@ class MaxRectsBin {
     //   neutral (0) → pure geometric BRS decides
     const sb = this._strategy?.splitBias ?? 0;
     if (sb > 0) {
-      if (this._strategy?.zigzag) {
-        if (this._zigzagDir > 0) maxH *= sb;   // → phase: vFirst (expande p/ direita)
-        else maxV *= sb;                        // ↓ phase: hFirst (expande p/ baixo)
-      } else if (this.direcao === 'vertical') {
+      if (this.direcao === 'vertical') {
         maxV *= sb;
       } else if (this.direcao === 'horizontal') {
         maxH *= sb;
@@ -560,13 +601,16 @@ class MaxRectsBin {
   // ──────────────────────────────────────────────────────────
 
   /**
-   * Merge adjacent free rectangles that share a full edge.
+   * Merge adjacent free rectangles — standard + agressivo.
    *
-   * Two merge passes:
-   *   - Horizontal: same y / same height, touching x-edges.
-   *   - Vertical:   same x / same width,  touching y-edges.
+   * Passo 1 (standard): mesma y/mesma altura (horizontal) ou
+   * mesma x/mesma largura (vertical), bordas encostando.
    *
-   * Repeats until no more merges are possible.
+   * Passo 2 (agressivo): retângulos com sobreposição parcial
+   * num eixo e adjacentes no outro → união (bbox) se a área
+   * extra não contiver peças colocadas.
+   *
+   * Repete até não haver mais merges.
    */
   _mergeFreeRects() {
     let dirty = true;
@@ -578,41 +622,58 @@ class MaxRectsBin {
           const a = list[i];
           const b = list[j];
 
-          // Horizontal merge: same row
+          // ── Standard: mesma fileira ──
           if (a.y === b.y && a.h === b.h) {
             if (a.x + a.w === b.x) {
-              // a is left of b → extend b leftwards
-              b.x = a.x;
-              b.w = a.w + b.w;
-              list.splice(i, 1);
-              dirty = true;
-              break;
+              b.x = a.x; b.w = a.w + b.w;
+              list.splice(i, 1); dirty = true; break;
             }
             if (b.x + b.w === a.x) {
-              // b is left of a → extend b rightwards
               b.w = a.w + b.w;
-              list.splice(i, 1);
-              dirty = true;
-              break;
+              list.splice(i, 1); dirty = true; break;
             }
           }
 
-          // Vertical merge: same column
+          // ── Standard: mesma coluna ──
           if (a.x === b.x && a.w === b.w) {
             if (a.y + a.h === b.y) {
-              // a is above b → extend b upwards
-              b.y = a.y;
-              b.h = a.h + b.h;
-              list.splice(i, 1);
-              dirty = true;
-              break;
+              b.y = a.y; b.h = a.h + b.h;
+              list.splice(i, 1); dirty = true; break;
             }
             if (b.y + b.h === a.y) {
-              // b is above a → extend b downwards
               b.h = a.h + b.h;
-              list.splice(i, 1);
-              dirty = true;
-              break;
+              list.splice(i, 1); dirty = true; break;
+            }
+          }
+
+          // ── Agressivo: sobreposição parcial + adjacente ──
+          // Horizontal overlap + vertical adjacency
+          if (a.x < b.x + b.w && b.x < a.x + a.w) {
+            const adjacent = (a.y + a.h === b.y) || (b.y + b.h === a.y);
+            if (adjacent) {
+              const ux = Math.min(a.x, b.x);
+              const uy = Math.min(a.y, b.y);
+              const uw = Math.max(a.x + a.w, b.x + b.w) - ux;
+              const uh = Math.max(a.y + a.h, b.y + b.h) - uy;
+              if (!_rectOverlapsAny(ux, uy, uw, uh, this.placed, this.margin)) {
+                a.x = ux; a.y = uy; a.w = uw; a.h = uh;
+                list.splice(j, 1); dirty = true; break;
+              }
+            }
+          }
+
+          // Vertical overlap + horizontal adjacency
+          if (!dirty && a.y < b.y + b.h && b.y < a.y + a.h) {
+            const adjacent = (a.x + a.w === b.x) || (b.x + b.w === a.x);
+            if (adjacent) {
+              const ux = Math.min(a.x, b.x);
+              const uy = Math.min(a.y, b.y);
+              const uw = Math.max(a.x + a.w, b.x + b.w) - ux;
+              const uh = Math.max(a.y + a.h, b.y + b.h) - uy;
+              if (!_rectOverlapsAny(ux, uy, uw, uh, this.placed, this.margin)) {
+                a.x = ux; a.y = uy; a.w = uw; a.h = uh;
+                list.splice(j, 1); dirty = true; break;
+              }
             }
           }
         }
@@ -635,6 +696,70 @@ class MaxRectsBin {
       }
     }
   }
+
+  // ──────────────────────────────────────────────────────────
+  //  Pós-compactação (tightening)
+  // ──────────────────────────────────────────────────────────
+
+  /**
+   * Compacta o layout movendo cada peça o máximo possível para a
+   * origem (esquerda + baixo), reduzindo a Dimensão Distrib.
+   *
+   * Algoritmo: ordena peças por distância da origem, depois para
+   * cada peça tenta deslocar X→0 e Y→0 em steps de 5mm, verificando
+   * colisão com as demais. Approach incremental com refinamento:
+   * tenta steps grandes (step=16) depois refina (step=5).
+   *
+   * @param {Array} placed - Array de peças colocadas { x, y, width, height }
+   * @param {number} margin - Margem entre peças em mm
+   */
+  compactLayout(placed, margin) {
+    if (placed.length < 2) return;
+    const m = Math.max(0, margin || 0);
+
+    // Ordena por distância da origem (mais próximo primeiro)
+    const sorted = [...placed].sort((a, b) => (a.x + a.y) - (b.x + b.y));
+
+    for (const piece of sorted) {
+      // 1. Tentar mover para esquerda (diminuir X)
+      // Step grosso primeiro, depois refina
+      const coarse = [16, 8, 5, 1];
+      let bestX = piece.x;
+      for (const step of coarse) {
+        for (let tx = bestX - step; tx >= 0 && tx < piece.x; tx -= step) {
+          if (!_rectCollides(tx, piece.y, piece.width, piece.height, piece, placed, m)) {
+            bestX = tx;
+          } else break;
+        }
+      }
+      piece.x = bestX;
+
+      // 2. Tentar mover para baixo (diminuir Y)
+      let bestY = piece.y;
+      for (const step of coarse) {
+        for (let ty = bestY - step; ty >= 0 && ty < piece.y; ty -= step) {
+          if (!_rectCollides(piece.x, ty, piece.width, piece.height, piece, placed, m)) {
+            bestY = ty;
+          } else break;
+        }
+      }
+      piece.y = bestY;
+    }
+  }
+}
+
+/** Verifica se um retângulo colide com alguma peça (excluindo self) */
+function _rectCollides(x, y, w, h, self, all, margin) {
+  for (const other of all) {
+    if (other === self) continue;
+    if (x < other.x + other.width + margin &&
+        x + w + margin > other.x &&
+        y < other.y + other.height + margin &&
+        y + h + margin > other.y) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** True if rect `a` fully contains rect `b` */
@@ -643,6 +768,20 @@ function _contains(a, b) {
          a.y <= b.y &&
          a.x + a.w >= b.x + b.w &&
          a.y + a.h >= b.y + b.h;
+}
+
+/** True if rect (x,y,w,h) overlaps any placed piece (considering margin) */
+function _rectOverlapsAny(x, y, w, h, placed, margin) {
+  const m = Math.max(0, margin || 0);
+  for (const p of placed) {
+    if (x < p.x + p.width + m &&
+        x + w + m > p.x &&
+        y < p.y + p.height + m &&
+        y + h + m > p.y) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -716,6 +855,7 @@ const _CACHE_MAX = 100;
  * @param {number}  [opts.velocidadeCorte=0] - Cutting constant mm²/min (0 = skip). Formula: perim / (K / esp)
  * @param {number}  [opts.areaMinRetalho=0]  - Min waste area in mm² (0 = skip retalhos)
  * @param {string}  [opts.direcao='']        - Nesting sense: '' (auto), 'vertical' (prefer width), 'horizontal' (prefer height)
+ * @param {number}  [opts.estrategia=-1]     - 0=Vertical (colunas), 1=Horizontal (fileiras), 2=Retângulo (BRS+waste), 3=Quadrado (square+waste). Overrides direcao when set (0-3). -1=disabled.
  * @param {number}  [opts.repeticoes=0]      - 0 = each sheet returned individually (default). 1 = collapse identical layouts, counter tracks repetitions.
  *
  * Each returned sheet has `vezes_cortada` — how many physical copies of this layout are needed.
@@ -772,6 +912,28 @@ function _run(pieces, sheetDescriptors, opts) {
 
   // When estrategia is set (0-3), load its config and override direcao
   const strategyCfg = estrategia >= 0 ? _estrategiaConfig(estrategia) : null;
+
+  // External override: opts.tiers substitui os tiers da estratégia
+  // (usado pela disputa de agents para testar variações sem modificar o código)
+  if (strategyCfg && opts.tiers) {
+    strategyCfg.tiers = opts.tiers;
+  }
+  if (strategyCfg && opts.sortMode) {
+    const sortFns = {
+      'area-desc': (a, b) => (b.w * b.h) - (a.w * a.h),
+      'width-desc': (a, b) => b.w - a.w || (b.w * b.h) - (a.w * a.h),
+      'height-desc': (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h)
+    };
+    if (sortFns[opts.sortMode]) {
+      strategyCfg.sortComparator = sortFns[opts.sortMode];
+    }
+  }
+  if (strategyCfg && opts.splitBias !== undefined) {
+    strategyCfg.splitBias = opts.splitBias;
+  }
+  if (strategyCfg && opts.lookAheadOverride !== undefined) {
+    strategyCfg.lookAhead = opts.lookAheadOverride;
+  }
 
   // Estrategia define lookAhead greedy (0) vs BRS (10); opts.lookAhead sobrepõe
   const lookAhead = opts.lookAhead !== undefined ? opts.lookAhead : (strategyCfg?.lookAhead ?? 1);
@@ -864,23 +1026,57 @@ function _run(pieces, sheetDescriptors, opts) {
     const groupSheets = [];
 
     // ── Run MaxRects for this sheet group ──────────────────
-    // Salva o conjunto original (filtrado) para reset quando repeticoes=1
-    const _origRemaining = remaining.slice();
     let _loopGuard = 0;
 
+    // maxSheets = limite superior de chapas deste grupo.
+    // NÃO reutilizar/reciclar peças para "encher" maxSheets.
+    // maxSheets diz "não use mais que N", não "use exatamente N".
+    // Quando peças acabam (remaining.length===0), PARA — as chapas
+    // restantes do pool simplesmente não são usadas.
+    //
+    // vezes_cortada (pós-loop, repeticoes=1) colapsa chapas com
+    // layout idêntico geradas naturalmente. Não é o mesmo que
+    // forçar reciclagem para multiplicar chapas.
     while (maxSheets === 0 || groupSheets.length < maxSheets) {
       if (++_loopGuard > 10000) throw new Error('Infinite loop detected in sheet generation');
-      if (remaining.length === 0) {
-        // Com repeticoes=1 e maxSheets definido: recicla as peças originais
-        // para gerar mais chapas (cópias idênticas) até o limite.
-        // Só recicla se as peças realmente geraram MAIS DE UMA chapa
-        // (groupSheets.length > 1). Se couberam todas numa chapa só,
-        // não há motivo para repetir — só 1 chapa será cortada.
-        if (!(opts.repeticoes || 0) || maxSheets === 0) break;
-        if (groupSheets.length > 1) remaining = _origRemaining.slice(); else break;
+      if (remaining.length === 0) break;
+
+      // ── Beam Search (quando beamWidth > 0) ────────────────
+      if (opts.beamWidth > 0) {
+        const beamResult = _beamNest(remaining, effW, effH, {
+          margin, rotation, direcao, estrategia,
+          beamWidth: opts.beamWidth,
+          tiers: opts.tiers,
+          sortMode: opts.sortMode,
+          splitBias: opts.splitBias,
+          lookAheadOverride: opts.lookAheadOverride,
+          zonaPct: opts.zonaPct
+        });
+
+        if (beamResult.placed.length === 0) break;
+
+        const usedArea = beamResult.placed.reduce((s, p) => s + p.area, 0);
+        groupSheets.push({
+          pieces: beamResult.placed,
+          usedArea,
+          utilization: Math.round((usedArea / sheetArea) * 10000) / 100,
+          sheetWidth: sheetW,
+          sheetHeight: sheetH
+        });
+
+        const stillRemaining = beamResult.stillRemaining;
+        remaining.length = 0;
+        remaining.push(...stillRemaining);
+        continue;
       }
 
-      const bin = new MaxRectsBin(effW, effH, { margin, direcao, estrategia });
+      const bin = new MaxRectsBin(effW, effH, {
+        margin, direcao, estrategia,
+        tiers: opts.tiers,
+        sortMode: opts.sortMode,
+        splitBias: opts.splitBias,
+        lookAheadOverride: opts.lookAheadOverride
+      });
       const placed = [];
       const stillRemaining = [];
 
@@ -894,6 +1090,7 @@ function _run(pieces, sheetDescriptors, opts) {
 
         if (pos) {
           pos.label = piece.label;
+          pos.material = piece.material || '';
           pos.espessura_mm = piece.espessura_mm || 0;
           pos.area = piece.w * piece.h;
           placed.push(pos);
@@ -902,11 +1099,41 @@ function _run(pieces, sheetDescriptors, opts) {
         }
       }
 
-      if (placed.length === 0) {
-        // Peças restantes não encaixam — com repeticoes=1 recicla
-        if (!(opts.repeticoes || 0) || maxSheets === 0 || remaining.length === 0) break;
-        if (groupSheets.length > 1) { remaining = _origRemaining.slice(); continue; } else break;
+      // ── Gap-fill: tenta colocar peças restantes em espaços vazios ──
+      // Após o loop principal, algumas peças podem não ter encaixado
+      // por causa da ordenação (ex: peça grande bloqueou). Mas pode
+      // haver free rects grandes o suficiente para as peças menores.
+      // Ordena por área crescente (menores primeiro) e tenta colocar
+      // em QUALQUER free rect disponível, sem look-ahead.
+      if (stillRemaining.length > 0 && placed.length > 0) {
+        const gapCandidates = [...stillRemaining].sort((a, b) => (a.w * a.h) - (b.w * b.h));
+        const newStillRemaining = [];
+        for (const piece of gapCandidates) {
+          const pos = bin.insert(piece.w, piece.h, {
+            lookAhead: 0,
+            remaining: [],
+            rotation
+          });
+          if (pos) {
+            pos.label = piece.label;
+            pos.material = piece.material || '';
+            pos.espessura_mm = piece.espessura_mm || 0;
+            pos.area = piece.w * piece.h;
+            placed.push(pos);
+          } else {
+            newStillRemaining.push(piece);
+          }
+        }
+        stillRemaining.length = 0;
+        stillRemaining.push(...newStillRemaining);
       }
+
+      if (placed.length === 0) break;
+
+      // ── Pós-compactação: reduz Dimensão Distrib. ─────────
+      // Move cada peça o máximo possível para a origem sem colidir,
+      // eliminando gaps e tiras inúteis dentro do bbox.
+      bin.compactLayout(placed, margin);
 
       const usedArea = placed.reduce((s, p) => s + p.area, 0);
       groupSheets.push({
@@ -1124,6 +1351,253 @@ function calcularRetalhos(pieces, sheetW, sheetH, areaMin) {
   }
 
   return retalhos;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Beam Search + Retalho-aware Scoring
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Score um layout parcial medindo a QUALIDADE DOS RETALHOS para
+ * as peças restantes.
+ *
+ * Para cada free rect:
+ *   1. Fit ratio: a maior peça restante que cabe ocupa % da área?
+ *   2. Aspect fit: retalho estreito prefere peças estreitas
+ *   3. BRS: maior freeRect contíguo
+ *   4. Bbox compactness: densidade do bbox
+ *
+ * Retorna score normalizado (0..1).
+ */
+function _scoreLayout(bin, remaining, rotation) {
+  const fr = bin.freeRects;
+  const pl = bin.placed;
+  if (fr.length === 0) return 0;
+
+  // Bbox compactness
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pl) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x + p.width > maxX) maxX = p.x + p.width;
+    if (p.y + p.height > maxY) maxY = p.y + p.height;
+  }
+  const bboxW = Math.max(1, maxX - minX);
+  const bboxH = Math.max(1, maxY - minY);
+  const bboxArea = bboxW * bboxH;
+  const placedArea = pl.reduce((s, p) => s + p.width * p.height, 0);
+  const compactness = bboxArea > 0 ? placedArea / bboxArea : 0;
+
+  // Maior free rect (BRS)
+  const largestFree = fr.reduce((max, r) => Math.max(max, r.w * r.h), 1);
+
+  // Pontua cada free rect pela compatibilidade com peças restantes
+  let fitScore = 0;
+  const margin = bin.margin || 0;
+
+  for (const rect of fr) {
+    if (remaining.length === 0) break;
+
+    // Encontra a peça restante que MELHOR se encaixa neste retalho
+    let bestFit = 0;
+    for (const p of remaining) {
+      const rw = p.w + margin;
+      const rh = p.h + margin;
+      // Testa as duas orientações
+      const fits = [];
+      if (rw <= rect.w && rh <= rect.h) fits.push({ fw: rw, fh: rh, rot: false });
+      if (rotation && rh <= rect.w && rw <= rect.h) fits.push({ fw: rh, fh: rw, rot: true });
+      for (const f of fits) {
+        // Fit ratio: quanto do retalho a peça preenche
+        const areaFit = (f.fw * f.fh) / (rect.w * rect.h);
+        // Aspect fit: quão compatível é o formato
+        const rectAsp = Math.min(rect.w, rect.h) / Math.max(rect.w, rect.h);
+        const pieceAsp = Math.min(f.fw, f.fh) / Math.max(f.fw, f.fh);
+        const aspMatch = 1 - Math.abs(rectAsp - pieceAsp);
+        // Score combinado: 70% area fit, 30% aspect match
+        const score = areaFit * 0.7 + aspMatch * 0.3;
+        if (score > bestFit) bestFit = score;
+      }
+    }
+    fitScore += bestFit;
+  }
+
+  // Normaliza fitScore pelo número de free rects
+  const avgFit = fr.length > 0 ? fitScore / fr.length : 0;
+
+  // ── Zonas de trabalho (anti-espalhamento horizontal) ─────
+  // Divide a chapa em N zonas ao longo do comprimento (X).
+  // zonaPct (1-99): 1 = chapa toda (livre), 99 = máx. zoneamento.
+  // Se zona anterior não está >80% cheia, peças em zonas
+  // posteriores são penalizadas. Força preenchimento vertical
+  // antes de espalhar horizontalmente.
+  const zonaPct = bin._zonaPct || 80; // default apôs backtest
+  const numZones = Math.max(1, Math.min(99, Math.round(zonaPct)));
+  // zoneW inteiro — evita loop infinito por floating point
+  // (ex: 6000/9 = 666.666... → px nunca alcança pxEnd)
+  const zoneW = Math.max(1, Math.floor(bin.binW / numZones));
+  const zoneArea = bin.binH * zoneW;
+
+  // Calcula área preenchida por zona
+  const zoneFill = new Array(numZones).fill(0);
+  for (const p of pl) {
+    const z = Math.min(numZones - 1, Math.floor(p.x / zoneW));
+    // Uma peça pode ocupar múltiplas zonas — distribui proporcionalmente
+    const pxEnd = p.x + p.width;
+    let px = p.x;
+    while (px < pxEnd) {
+      const zz = Math.min(numZones - 1, Math.floor(px / zoneW));
+      const zzEnd = Math.min((zz + 1) * zoneW, pxEnd);
+      const slice = (zzEnd - px) / p.width; // fração desta peça nesta zona
+      zoneFill[zz] += p.width * p.height * slice;
+      px = zzEnd;
+    }
+  }
+
+  // Encontra a "fronteira" — primeira zona da esquerda com <80%
+  let frontier = -1;
+  for (let z = 0; z < numZones; z++) {
+    const ratio = zoneArea > 0 ? zoneFill[z] / zoneArea : 0;
+    if (ratio < 0.8) {
+      frontier = z;
+      break;
+    }
+  }
+  // Se todas ≥80%, não há penalidade
+  if (frontier < 0) frontier = numZones - 1;
+
+  // Penaliza peças além da fronteira
+  let zonePenalty = 0;
+  for (const p of pl) {
+    const z = Math.min(numZones - 1, Math.floor(p.x / zoneW));
+    if (z > frontier) {
+      const dist = (z - frontier) / Math.max(1, numZones - frontier);
+      zonePenalty += dist * (p.width * p.height) / Math.max(1, placedArea);
+    }
+  }
+  // zonePenalty: 0 (perfeito) a ~1 (tudo além da fronteira)
+  const zoneFactor = Math.max(0, 1 - zonePenalty * 0.5);
+
+  // Score final: combina compactness, fit, BRS e zone factor
+  const brsNorm = Math.min(1, largestFree / (bin.binW * bin.binH));
+  const rawScore = compactness * 0.25 + avgFit * 0.35 + brsNorm * 0.15;
+  return rawScore * zoneFactor;
+}
+
+/**
+ * Beam Search: para cada peça, testa todos (freeRect × orientação)
+ * em TODOS os K caminhos simultâneos. Mantém os K melhores.
+ *
+ * @param {Array} beam - [{ bin, score }]
+ * @param {object} piece - { w, h, label, material, espessura_mm }
+ * @param {Array} remaining - Peças restantes (para look-ahead no scoring)
+ * @param {number} K - Beam width
+ * @param {boolean} rotation - Permitir rotação
+ * @returns {Array} newBeam - [{ bin, score }] top-K
+ */
+function _beamInsert(beam, piece, remaining, K, rotation) {
+  const candidates = [];
+
+  for (const entry of beam) {
+    const bin = entry.bin;
+    const mw = piece.w + bin.margin;
+    const mh = piece.h + bin.margin;
+
+    // Enumera todos (freeRect × orientação)
+    for (let i = 0; i < bin.freeRects.length; i++) {
+      const fr = bin.freeRects[i];
+      const opts = [];
+
+      // Orientation A
+      if (mw <= fr.w && mh <= fr.h) {
+        opts.push({ px: fr.x, py: fr.y, pw: mw, ph: mh, rotated: false });
+      }
+      // Orientation B (rotated)
+      if (rotation && mh <= fr.w && mw <= fr.h) {
+        opts.push({ px: fr.x, py: fr.y, pw: mh, ph: mw, rotated: true });
+      }
+
+      for (const opt of opts) {
+        const clone = bin.clone();
+        // Place piece at candidate position
+        const placedRect = {
+          x: opt.px, y: opt.py,
+          width: opt.rotated ? piece.h : piece.w,
+          height: opt.rotated ? piece.w : piece.h,
+          rotated: opt.rotated,
+          label: piece.label || '',
+          material: piece.material || '',
+          espessura_mm: piece.espessura_mm || 0,
+          area: piece.w * piece.h
+        };
+        clone.placed.push(placedRect);
+        clone._placedArea += placedRect.width * placedRect.height;
+        clone._splitRect(i, opt.px, opt.py, opt.pw, opt.ph);
+
+        clone._lastPx = opt.px;
+        clone._lastPy = opt.py;
+        if (opt.px < clone._bboxMinX) clone._bboxMinX = opt.px;
+        if (opt.py < clone._bboxMinY) clone._bboxMinY = opt.py;
+        const br = opt.px + opt.pw;
+        const bb = opt.py + opt.ph;
+        if (br > clone._bboxMaxX) clone._bboxMaxX = br;
+        if (bb > clone._bboxMaxY) clone._bboxMaxY = bb;
+
+        const score = _scoreLayout(clone, remaining, rotation);
+        candidates.push({ bin: clone, score });
+      }
+    }
+  }
+
+  // Ordena decrescente e mantém top-K
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates.slice(0, K);
+}
+
+/**
+ * Executa Beam Search para um grupo de peças em uma chapa.
+ * Retorna { placed, stillRemaining }.
+ */
+function _beamNest(sortedPieces, sheetW, sheetH, opts) {
+  const rotation = opts.rotation !== false;
+  const K = opts.beamWidth || 20;
+  const margin = Math.max(0, opts.margin || 0);
+  const direcao = opts.direcao || '';
+  const estrategia = opts.estrategia != null ? opts.estrategia : -1;
+
+  // Inicializa beam com 1 bin vazio
+  const initialBin = new MaxRectsBin(sheetW, sheetH, {
+    margin, direcao, estrategia,
+    tiers: opts.tiers,
+    sortMode: opts.sortMode,
+    splitBias: opts.splitBias,
+    lookAheadOverride: opts.lookAheadOverride,
+    zonaPct: opts.zonaPct
+  });
+
+  let beam = [{ bin: initialBin, score: 0 }];
+  const stillRemaining = [];
+
+  for (let pi = 0; pi < sortedPieces.length; pi++) {
+    const piece = sortedPieces[pi];
+    const remaining = sortedPieces.slice(pi + 1);
+
+    const newBeam = _beamInsert(beam, piece, remaining, K, rotation);
+
+    if (newBeam.length === 0) {
+      // Peça não coube em nenhum caminho
+      stillRemaining.push(piece);
+    } else {
+      beam = newBeam;
+    }
+  }
+
+  // Retorna o melhor caminho
+  const best = beam.reduce((a, b) => a.score > b.score ? a : b, beam[0]);
+  return {
+    placed: best ? best.bin.placed : [],
+    stillRemaining
+  };
 }
 
 module.exports = { MaxRectsBin, nest };
