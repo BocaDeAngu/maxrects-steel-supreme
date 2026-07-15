@@ -210,10 +210,10 @@ test('PLACEMENT: multiple sheets when pieces exceed one sheet', () => {
   // repeticoes=0 (default): each sheet is returned individually
   const result = nest([
     { w: 1000, h: 1000, label: 'Big', quantity: 5 }
-  ], 1000, 1000, { lookAhead: 0, rotation: false, maxSheets: 5 });
+  ], 1000, 1000, { lookAhead: 0, rotation: false, maxSheets: 5, repeticoes: 0 });
 
   assert.strictEqual(result.sheets.length, 5, 'Should use 5 sheets');
-  assert.strictEqual(result.sheets[0].vezes_cortada, 1, 'Individual sheets have counter 1');
+  assert.strictEqual(result.sheets[0].qtd_copias, 1, 'Individual sheets have counter 1');
   assert.strictEqual(result.unplaced, 0, 'All placed');
   assert.strictEqual(result.stats.avgUtilization, 100, '100% utilization per sheet');
 });
@@ -225,7 +225,7 @@ test('PLACEMENT: repeticoes=1 collapses identical layouts', () => {
 
   // With repeticoes=1, identical full-sheet layouts collapse into 1 entry
   assert.strictEqual(result.sheets.length, 1, 'Should use 1 unique layout');
-  assert.strictEqual(result.sheets[0].vezes_cortada, 5, 'Counter shows 5 repetitions');
+  assert.strictEqual(result.sheets[0].qtd_copias, 5, 'Counter shows 5 repetitions');
   assert.strictEqual(result.unplaced, 0, 'All placed');
   // avgUtilization is per unique sheet (stats not weighted by vezes_cortada)
   assert(result.stats.avgUtilization >= 100, 'Utilization reflects total piece area vs unique sheets');

@@ -21,7 +21,7 @@
 // ═══════════════════════════════════════════════════════════
 
 /**
- * Maps estrategia (0|1|2|3) to a full algorithm configuration:
+ * Maps estrategia (0|1|2) to a full algorithm configuration:
  *   direcao, sort order, lookAhead, split bias, and per-tier weights.
  *
  * Each tier has a `weight` multiplier and optional `mode` string.
@@ -34,7 +34,7 @@
  *   Tier 5 — squareness bonus (prefer splits leaving near-square rects)
  *   Tiebreaker — direcao-based position preference
  *
- * @param {number} estrategia — 0=Vertical, 1=Horizontal, 2=Retângulo, 3=Quadrado
+ * @param {number} estrategia — 0=Vertical, 1=Horizontal, 2=Retângulo
  * @returns {object} config
  */
 const DEFAULT_TIERS = {
@@ -46,75 +46,71 @@ const DEFAULT_TIERS = {
   tiebreaker: { weight: 0 }
 };
 
-function _estrategiaConfig(estrategia) {
-  const e = [0, 1, 2, 3].includes(estrategia) ? estrategia : 0;
+function _strategyConfig(estrategia) {
+  const e = [0, 1, 2].includes(estrategia) ? estrategia : 0;
 
   switch (e) {
-    case 0: // Vertical — colunas compactas (muitas peças)
+    // ═══ Vertical (0) — pure vertical columns ═══
+    // BRS + mode 'direcao' + fit-only rotation.
+    // mode='direcao': cand.py × binArea/binH → prefere BOTTOM → colunas consomem Y.
+    // fit-only: não rotaciona a menos que a orientação original não caiba.
+    case 0:
       return {
         label: 'Vertical',
         direcao: 'vertical',
         sortComparator:
           (a, b) => b.w - a.w || (b.w * b.h) - (a.w * a.h),
-        lookAhead: 1,
-        splitBias: 30,
+        lookAhead: 0,
+        splitBias: 40,
+        zonaPct: 1,
+        rotationMode: 'fit-only',
         tiers: {
-          tier2: { weight: 12.0, mode: 'density' },
-          tier3: { weight: 1.0, mode: 'direcao' },
-          tier4: { weight: 1.0 },
-          tier5: { weight: 0.2 },
-          tiebreaker: { weight: 0.01, mode: 'direcao' }
+          tier2: { weight: 1.0, mode: 'direcao' },
+          tier3: { weight: 0 },
+          tier4: { weight: 0 },
+          tier5: { weight: 0 },
+          tiebreaker: { weight: 0 }
         }
       };
 
-    case 1: // Horizontal — fileiras compactas (muitas peças)
+    // ═══ Horizontal (1) — pure horizontal rows ═══
+    // mode='direcao': cand.px × binArea/binW → prefere RIGHT → fileiras consomem X.
+    // fit-only: só rotaciona se necessário.
+    case 1:
       return {
         label: 'Horizontal',
         direcao: 'horizontal',
         sortComparator:
           (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h),
-        lookAhead: 2,
-        splitBias: 50,
+        lookAhead: 0,
+        splitBias: 60,
+        zonaPct: 1,
+        rotationMode: 'fit-only',
         tiers: {
-          tier2: { weight: 10.0, mode: 'density' },
-          tier3: { weight: 1.0, mode: 'direcao' },
-          tier4: { weight: 1.0 },
-          tier5: { weight: 0.1 },
-          tiebreaker: { weight: 0.01, mode: 'direcao' }
-        }
-      };
-
-    case 2: // Retângulo — BAF + anti-gap
-      // BAF (Best Area Fit): peça grande→espaço grande, peça pequena→espaço pequeno.
-      // Minimiza leftover, reduz fragmentação.
-      return {
-        label: 'Retângulo',
-        direcao: '',
-        sortComparator: (a, b) => (b.w * b.h) - (a.w * a.h),
-        lookAhead: 2,
-        splitBias: 50,
-        tiers: {
-          tier2: { weight: 1.0, mode: 'baf' },
+          tier2: { weight: 1.0, mode: 'direcao' },
           tier3: { weight: 0 },
-          tier4: { weight: 0.5 },
-          tier5: { weight: 3.0 },
+          tier4: { weight: 0 },
+          tier5: { weight: 0 },
           tiebreaker: { weight: 0 }
         }
       };
 
-    case 3: // Quadrado — BAF + anti-gap forte
+    // ═══ Retângulo (2) — rectangular block + zones ═══
+    // BAF (Best Area Fit): large piece→large space, small piece→small space.
+    // Minimizes leftover, high squareness, WITH zones (anti-spread).
+    case 2:
       return {
-        label: 'Quadrado',
+        label: 'Retângulo',
         direcao: '',
-        sortComparator:
-          (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h),
+        sortComparator: (a, b) => (b.w * b.h) - (a.w * a.h),
         lookAhead: 3,
-        splitBias: 0,
+        splitBias: 50,
+        zonaPct: 80, // active zoning — forced horizontal compaction
         tiers: {
           tier2: { weight: 1.0, mode: 'baf' },
           tier3: { weight: 0 },
-          tier4: { weight: 1.0 },
-          tier5: { weight: 5.0 },
+          tier4: { weight: 1.5 },
+          tier5: { weight: 4.0 },
           tiebreaker: { weight: 0 }
         }
       };
@@ -132,7 +128,7 @@ class MaxRectsBin {
    * @param {object} [opts] - Configuration object
    * @param {number} [opts.margin=0]     - Gap between pieces
    * @param {string} [opts.direcao='']   - 'vertical'|'horizontal'|''
-   * @param {number} [opts.estrategia=0]  - 0=Vertical, 1=Horizontal, 2=Retângulo, 3=Quadrado
+   * @param {number} [opts.estrategia=0]  - 0=Vertical, 1=Horizontal, 2=Retângulo
    * @param {object} [opts.tiers]        - Override tiers for the strategy
    * @param {string} [opts.sortMode]     - Override sort mode
    * @param {number} [opts.splitBias]    - Override split bias
@@ -147,10 +143,10 @@ class MaxRectsBin {
     this.placed = [];
 
     // estrategia -1 = backward compat (classic direcao mode, no overrides)
-    const est = [0, 1, 2, 3].includes(opts.estrategia) ? opts.estrategia : -1;
+    const est = [0, 1, 2].includes(opts.estrategia) ? opts.estrategia : -1;
     this.estrategia = est;
     if (est >= 0) {
-      const cfg = _estrategiaConfig(est);
+      const cfg = _strategyConfig(est);
       this._strategy = cfg;
       this.direcao = cfg.direcao; // strategy direcao overrides passed direcao
 
@@ -174,8 +170,11 @@ class MaxRectsBin {
       if (opts.lookAheadOverride !== undefined) {
         this._strategy.lookAhead = opts.lookAheadOverride;
       }
+      // zonaPct da estratégia, com override externo se explícito
+      this._zonaPct = opts.zonaPct !== undefined ? opts.zonaPct : (cfg.zonaPct || 80);
     } else {
       this._strategy = null;
+      this._zonaPct = opts.zonaPct || 80;
     }
 
     this._lastPx = -1;
@@ -189,9 +188,6 @@ class MaxRectsBin {
     this._alignW = 0;         // piece width  that triggered alignment
     this._alignH = 0;         // piece height that triggered alignment
     this._alignAnchorPos = -1; // py (alignAxis='x') ou px (alignAxis='y')
-
-    // Zona de trabalho (anti-espalhamento horizontal)
-    this._zonaPct = opts.zonaPct || 80;
   }
 
   /**
@@ -232,7 +228,7 @@ class MaxRectsBin {
    * @param {object} [opts]
    * @param {number} [opts.lookAhead]   - Override strategy lookAhead (optional)
    * @param {Array}  [opts.remaining=[]] - Remaining pieces for look-ahead
-   * @param {boolean} [opts.rotation=true] - Allow 90° rotation
+   * @param {boolean|string} [opts.rotation=true] - Allow 90° rotation. Pass 'fit-only' to only rotate when original orientation doesn't fit anywhere
    * @returns {object|null} Placed rect { x, y, width, height, rotated } or null
    */
   insert(w, h, opts = {}) {
@@ -242,13 +238,13 @@ class MaxRectsBin {
     const mw = w + this.margin;
     const mh = h + this.margin;
 
-    // ── Enumerate all candidate placements ──────────────────
+    // ── rotationMode: 'fit-only' tenta sem rotação primeiro ──
+    // Só rotaciona se a orientação original não couber em nenhum free rect.
     const candidates = [];
 
+    // Pass 1: orientação original
     for (let i = 0; i < this.freeRects.length; i++) {
       const fr = this.freeRects[i];
-
-      // Orientation A: as-is
       if (mw <= fr.w && mh <= fr.h) {
         candidates.push({
           frIdx: i, px: fr.x, py: fr.y,
@@ -256,14 +252,40 @@ class MaxRectsBin {
           rotated: false
         });
       }
+    }
 
-      // Orientation B: rotated 90°
-      if (rotation && mh <= fr.w && mw <= fr.h) {
-        candidates.push({
-          frIdx: i, px: fr.x, py: fr.y,
-          pw: mh, ph: mw,
-          rotated: true
-        });
+    // Pass 2: se nada coube sem rotação, tenta com rotação
+    if (candidates.length === 0 && rotation === 'fit-only') {
+      for (let i = 0; i < this.freeRects.length; i++) {
+        const fr = this.freeRects[i];
+        if (mh <= fr.w && mw <= fr.h) {
+          candidates.push({
+            frIdx: i, px: fr.x, py: fr.y,
+            pw: mh, ph: mw,
+            rotated: true
+          });
+        }
+      }
+    }
+
+    // Pass 3: modo normal (ambas orientações juntas)
+    if (candidates.length === 0 && rotation && rotation !== 'fit-only') {
+      for (let i = 0; i < this.freeRects.length; i++) {
+        const fr = this.freeRects[i];
+        if (mw <= fr.w && mh <= fr.h) {
+          candidates.push({
+            frIdx: i, px: fr.x, py: fr.y,
+            pw: mw, ph: mh,
+            rotated: false
+          });
+        }
+        if (mh <= fr.w && mw <= fr.h) {
+          candidates.push({
+            frIdx: i, px: fr.x, py: fr.y,
+            pw: mh, ph: mw,
+            rotated: true
+          });
+        }
       }
     }
 
@@ -296,6 +318,41 @@ class MaxRectsBin {
     this.placed.push(placedRect);
     this._placedArea += placedRect.width * placedRect.height;
     this._splitRect(best.frIdx, best.px, best.py, best.pw, best.ph);
+
+    // ── Clip free rects that overlap the newly placed piece ──
+    // _splitRect only acts on the free rect where the piece was placed.
+    // Other free rects (from previous splits elsewhere) may overlap the
+    // new piece — clip them to prevent future placements from colliding.
+    const cx = best.px, cy = best.py, cw = best.pw, ch = best.ph;
+    for (let fi = this.freeRects.length - 1; fi >= 0; fi--) {
+      const fr = this.freeRects[fi];
+      if (fr.x >= cx + cw || fr.x + fr.w <= cx ||
+          fr.y >= cy + ch || fr.y + fr.h <= cy) continue; // no overlap
+
+      // Clip: split overlapping free rect into up to 4 non-overlapping pieces
+      const clipped = [];
+      // Left strip (x < cx)
+      if (fr.x < cx) clipped.push({ x: fr.x, y: fr.y, w: cx - fr.x, h: fr.h });
+      // Right strip (x > cx + cw)
+      if (fr.x + fr.w > cx + cw) clipped.push({ x: cx + cw, y: fr.y, w: fr.x + fr.w - (cx + cw), h: fr.h });
+      // Top strip (y < cy) — overlaps only in the X range of the clip rect
+      if (fr.y < cy) {
+        const nx = Math.max(fr.x, cx);
+        const nw = Math.min(fr.x + fr.w, cx + cw) - nx;
+        if (nw > 0) clipped.push({ x: nx, y: fr.y, w: nw, h: cy - fr.y });
+      }
+      // Bottom strip (y > cy + ch)
+      if (fr.y + fr.h > cy + ch) {
+        const nx = Math.max(fr.x, cx);
+        const nw = Math.min(fr.x + fr.w, cx + cw) - nx;
+        if (nw > 0) clipped.push({ x: nx, y: cy + ch, w: nw, h: fr.y + fr.h - (cy + ch) });
+      }
+
+      this.freeRects.splice(fi, 1);
+      for (const c of clipped) {
+        if (c.w > 0 && c.h > 0) this.freeRects.push(c);
+      }
+    }
 
     this._lastPx = best.px;
     this._lastPy = best.py;
@@ -336,14 +393,25 @@ class MaxRectsBin {
     const vSplits = this._genSplitV(fr, cand.px, cand.py, cand.pw, cand.ph);
     const hSplits = this._genSplitH(fr, cand.px, cand.py, cand.pw, cand.ph);
 
-    // Pick the better split (com bias suave de 5x para direcao)
+    // Pick the better split (com bias direcional do splitBias da estratégia)
+    // Usa splitBias para alinhar com _splitRect — se sem estratégia, fallback 5x.
     let maxV = vSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
     let maxH = hSplits.reduce((m, r) => Math.max(m, r.w * r.h), 0);
 
-    if (this.direcao === 'vertical') {
-      maxV *= 5;
-    } else if (this.direcao === 'horizontal') {
-      maxH *= 5;
+    const sb = this._strategy?.splitBias ?? 0;
+    if (sb > 0) {
+      if (this.direcao === 'vertical') {
+        maxV *= sb;
+      } else if (this.direcao === 'horizontal') {
+        maxH *= sb;
+      }
+    } else {
+      // Fallback clássico — bias suave 5x para direção sem estratégia
+      if (this.direcao === 'vertical') {
+        maxV *= 5;
+      } else if (this.direcao === 'horizontal') {
+        maxH *= 5;
+      }
     }
 
     const splits = maxV <= maxH ? vSplits : hSplits;
@@ -477,9 +545,11 @@ class MaxRectsBin {
     const t3 = T.tier3;
     if (t3?.mode === 'direcao' && t3.weight > 0) {
       if (this.direcao === 'vertical') {
-        tier3 = (cand.pw / fr.w) * binArea * t3.weight;
-      } else if (this.direcao === 'horizontal') {
+        // Vertical = colunas → consumir Y → recompensa preencher altura (ph / fr.h)
         tier3 = (cand.ph / fr.h) * binArea * t3.weight;
+      } else if (this.direcao === 'horizontal') {
+        // Horizontal = fileiras → consumir X → recompensa preencher largura (pw / fr.w)
+        tier3 = (cand.pw / fr.w) * binArea * t3.weight;
       }
     }
 
@@ -784,47 +854,9 @@ function _rectOverlapsAny(x, y, w, h, placed, margin) {
   return false;
 }
 
-// ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
 //  Nest — high-level orchestrator
-// ────────────────────────────────────────────────────────────
-
-// ────────────────────────────────────────────────────────────
-//  Repeat-call cache (legacy multi-call loop)
-// ────────────────────────────────────────────────────────────
-
-/**
- * Deterministic key for a single-sheet legacy call.
- * Covers the first 20 pieces + dimensions + rotation + margin + borda.
- */
-function _callKey(pieces, sheetW, sheetH, opts) {
-  let h = sheetW + 'x' + sheetH;
-  h += '|r=' + (opts.rotation !== false);
-  h += '|m=' + (opts.margin || 0);
-  h += '|b=' + (opts.borda_mm || 0);
-  h += '|s=' + (opts.direcao || '');
-  h += '|e=' + (opts.estrategia != null ? opts.estrategia : '-1');
-  h += '|l=' + (opts.lookAhead !== undefined ? opts.lookAhead : 1);
-  h += '|d=' + (parseFloat(opts.densidade) || 0);
-  h += '|v=' + (parseFloat(opts.velocidadeCorte) || 0);
-  h += '|a=' + (parseInt(opts.areaMinRetalho, 10) || 0);
-  h += '|fe=' + (opts.filterEspessura || 0);
-  h += '|se=' + (parseFloat(opts.sheetEspessura) || 0);
-  h += '|fm=' + (opts.filterMaterial || 0);
-  h += '|sm=' + (opts.sheetMaterial || '');
-  const limit = Math.min(pieces.length, 20);
-  for (let i = 0; i < limit; i++) {
-    const p = pieces[i];
-    h += '|' + (p.w|0) + 'x' + (p.h|0) + (p.label||'');
-  }
-  return h;
-}
-
-const _callCache = new Map();
-const _CACHE_MAX = 100;
-
-// ────────────────────────────────────────────────────────────
-//  Nest — high-level orchestrator
-// ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
 
 /**
  * Run MaxRects nesting for a set of pieces across one or more sheets.
@@ -838,9 +870,7 @@ const _CACHE_MAX = 100;
  *      Pieces allocated in earlier sheet groups are removed from later ones.
  *
  * 2. Single-sheet (legacy):  nest(pieces, sheetW, sheetH, opts)
- *    Backward-compatible. When maxSheets is 0 (default), the function
- *    detects repeated identical calls and increments `vezes_cortada`
- *    on previously-cached sheets instead of generating duplicate layouts.
+ *    Backward-compatible.
  *
  * @param {Array} pieces - [{ w, h, label?, quantity?, espessura_mm? }]
  * @param {number|Array} sheetW - Sheet width (mm) or array of sheet descriptors
@@ -855,13 +885,7 @@ const _CACHE_MAX = 100;
  * @param {number}  [opts.velocidadeCorte=0] - Cutting constant mm²/min (0 = skip). Formula: perim / (K / esp)
  * @param {number}  [opts.areaMinRetalho=0]  - Min waste area in mm² (0 = skip retalhos)
  * @param {string}  [opts.direcao='']        - Nesting sense: '' (auto), 'vertical' (prefer width), 'horizontal' (prefer height)
- * @param {number}  [opts.estrategia=-1]     - 0=Vertical (colunas), 1=Horizontal (fileiras), 2=Retângulo (BRS+waste), 3=Quadrado (square+waste). Overrides direcao when set (0-3). -1=disabled.
- * @param {number}  [opts.repeticoes=0]      - 0 = each sheet returned individually (default). 1 = collapse identical layouts, counter tracks repetitions.
- *
- * Each returned sheet has `vezes_cortada` — how many physical copies of this layout are needed.
- * In legacy mode with maxSheets=0 (the default), `vezes_cortada` is auto-incremented on
- * repeated identical calls so the caller's loop produces the same layout N times with
- * the repetition count set correctly.
+ * @param {number}  [opts.estrategia=-1]     - 0=Vertical (colunas), 1=Horizontal (fileiras), 2=Retângulo (BRS+waste). Overrides direcao when set (0-2). -1=disabled.
  *
  * @returns {{ sheets: Array, stats: object, unplaced: number }}
  */
@@ -874,26 +898,6 @@ function nest(pieces, sheetW, sheetH, opts = {}) {
   // Legacy: nest(pieces, width, height, opts)
   const result = _run(pieces, [{ width: sheetW, height: sheetH, count: opts.maxSheets || 0 }], opts);
 
-  // ── Repeat-call detection (legacy only, when maxSheets is 0) ──
-  if (!opts.maxSheets) {
-    const key = _callKey(pieces, sheetW, sheetH, opts);
-    const cached = _callCache.get(key);
-    if (cached) {
-      cached.count++;
-      for (const sheet of cached.result.sheets) {
-        sheet.vezes_cortada = cached.count;
-      }
-      return cached.result;
-    }
-    // First call — cache it
-    for (const sheet of result.sheets) sheet.vezes_cortada = 1;
-    _callCache.set(key, { result, count: 1 });
-    if (_callCache.size > _CACHE_MAX) {
-      const firstKey = _callCache.keys().next().value;
-      _callCache.delete(firstKey);
-    }
-  }
-
   return result;
 }
 
@@ -901,17 +905,17 @@ function nest(pieces, sheetW, sheetH, opts = {}) {
  * Internal runner — shared by legacy and multi-sheet entry points.
  */
 function _run(pieces, sheetDescriptors, opts) {
-  const rotation = opts.rotation !== false;
+  const rotation = opts.rotation === 'fit-only' ? 'fit-only' : opts.rotation !== false;
   const margin = Math.max(0, opts.margin || 0);
   const bordaMm = Math.max(0, opts.borda_mm || 0);
   const densidade = parseFloat(opts.densidade) || 0;
   const velocidadeCorte = parseFloat(opts.velocidadeCorte) || 0;
   const areaMinRetalho = Math.max(0, parseInt(opts.areaMinRetalho, 10) || 0);
   const direcao = ['vertical', 'horizontal'].includes(opts.direcao) ? opts.direcao : '';
-  const estrategia = [0, 1, 2, 3].includes(opts.estrategia) ? opts.estrategia : -1;
+  const estrategia = [0, 1, 2].includes(opts.estrategia) ? opts.estrategia : -1;
 
-  // When estrategia is set (0-3), load its config and override direcao
-  const strategyCfg = estrategia >= 0 ? _estrategiaConfig(estrategia) : null;
+  // When estrategia is set (0-2), load its config and override direcao
+  const strategyCfg = estrategia >= 0 ? _strategyConfig(estrategia) : null;
 
   // External override: opts.tiers substitui os tiers da estratégia
   // (usado pela disputa de agents para testar variações sem modificar o código)
@@ -934,6 +938,11 @@ function _run(pieces, sheetDescriptors, opts) {
   if (strategyCfg && opts.lookAheadOverride !== undefined) {
     strategyCfg.lookAhead = opts.lookAheadOverride;
   }
+
+  // rotationMode da estratégia: 'fit-only' → só rotaciona se original não couber
+  const effectiveRotation = strategyCfg?.rotationMode && opts.rotation !== false
+    ? strategyCfg.rotationMode
+    : rotation;
 
   // Estrategia define lookAhead greedy (0) vs BRS (10); opts.lookAhead sobrepõe
   const lookAhead = opts.lookAhead !== undefined ? opts.lookAhead : (strategyCfg?.lookAhead ?? 1);
@@ -1033,10 +1042,6 @@ function _run(pieces, sheetDescriptors, opts) {
     // maxSheets diz "não use mais que N", não "use exatamente N".
     // Quando peças acabam (remaining.length===0), PARA — as chapas
     // restantes do pool simplesmente não são usadas.
-    //
-    // vezes_cortada (pós-loop, repeticoes=1) colapsa chapas com
-    // layout idêntico geradas naturalmente. Não é o mesmo que
-    // forçar reciclagem para multiplicar chapas.
     while (maxSheets === 0 || groupSheets.length < maxSheets) {
       if (++_loopGuard > 10000) throw new Error('Infinite loop detected in sheet generation');
       if (remaining.length === 0) break;
@@ -1085,7 +1090,7 @@ function _run(pieces, sheetDescriptors, opts) {
         const pos = bin.insert(piece.w, piece.h, {
           lookAhead,
           remaining: remaining.slice(i + 1),
-          rotation
+          rotation: effectiveRotation
         });
 
         if (pos) {
@@ -1112,7 +1117,7 @@ function _run(pieces, sheetDescriptors, opts) {
           const pos = bin.insert(piece.w, piece.h, {
             lookAhead: 0,
             remaining: [],
-            rotation
+            rotation: effectiveRotation
           });
           if (pos) {
             pos.label = piece.label;
@@ -1148,13 +1153,21 @@ function _run(pieces, sheetDescriptors, opts) {
       remaining.push(...stillRemaining);
     }
 
-    // ── Assign vezes_cortada ──────────────────────────────────
-    if ((opts.repeticoes || 0) === 1) {
-      // repeticoes=1: collapse identical layouts, counter = repetitions
-      const totalGenerated = groupSheets.length;
-      const fpMap = new Map(); // fingerprint → index in deduped[]
+    // ════════════════════════════════════════════════════════
+    //  Output model: collapsed + real qtd_copias
+    //
+    //  When repeticoes=1 identical layouts are DEDUPED into a
+    //  single entry with `qtd_copias` reflecting total physical
+    //  copies needed. When repeticoes=0 (default), each sheet
+    //  is returned individually with qtd_copias=1.
+    //
+    //  `qtd_copias` means "this G-code program runs N times
+    //  on N identical sheets." The caller is responsible for
+    //  expanding downstream if needed.
+    // ════════════════════════════════════════════════════════
+    if (opts.repeticoes) {
+      const fpMap = new Map();
       const deduped = [];
-
       for (const sheet of groupSheets) {
         const fp = sheet.pieces
           .slice()
@@ -1162,19 +1175,19 @@ function _run(pieces, sheetDescriptors, opts) {
           .map(p => `${p.x},${p.y},${p.width},${p.height},${p.rotated?1:0},${p.label}`)
           .join('|');
         if (fpMap.has(fp)) {
-          deduped[fpMap.get(fp)].vezes_cortada++;
+          deduped[fpMap.get(fp)].qtd_copias++;
         } else {
           fpMap.set(fp, deduped.length);
-          sheet.vezes_cortada = 1;
+          sheet.qtd_copias = 1;
           deduped.push(sheet);
         }
       }
-
       groupSheets.length = 0;
       groupSheets.push(...deduped);
     } else {
-      // repeticoes=0 (default): each sheet is individual
-      for (const sheet of groupSheets) sheet.vezes_cortada = 1;
+      for (const sheet of groupSheets) {
+        sheet.qtd_copias = 1;
+      }
     }
 
     // ── Pass through extra metadata from descriptor ─────────
@@ -1244,7 +1257,7 @@ function _run(pieces, sheetDescriptors, opts) {
 
     // Retalhos
     if (areaMinRetalho > 0) {
-      sheet.retalhos = calcularRetalhos(sheet.pieces, sheet.sheetWidth, sheet.sheetHeight, areaMinRetalho);
+      sheet.retalhos = _calcScrap(sheet.pieces, sheet.sheetWidth, sheet.sheetHeight, areaMinRetalho);
     }
   }
 
@@ -1272,16 +1285,16 @@ function _run(pieces, sheetDescriptors, opts) {
 }
 
 // ────────────────────────────────────────────────────────────
-//  Retalhos (waste) calculation
+//  Scrap (waste) calculation
 // ────────────────────────────────────────────────────────────
 
 /**
- * Scan placed pieces and find rectangular gaps (retalhos / waste).
+ * Scan placed pieces and find rectangular gaps (scrap / waste).
  *
  * Divides the sheet into horizontal strips at each piece's top and bottom
  * edges, then finds empty runs within each strip.
  */
-function calcularRetalhos(pieces, sheetW, sheetH, areaMin) {
+function _calcScrap(pieces, sheetW, sheetH, areaMin) {
   if (!pieces || pieces.length === 0) return [];
 
   const occupied = pieces.map(p => ({ x: p.x, y: p.y, w: p.width, h: p.height }));
@@ -1432,56 +1445,64 @@ function _scoreLayout(bin, remaining, rotation) {
   // posteriores são penalizadas. Força preenchimento vertical
   // antes de espalhar horizontalmente.
   const zonaPct = bin._zonaPct || 80; // default apôs backtest
-  const numZones = Math.max(1, Math.min(99, Math.round(zonaPct)));
-  // zoneW inteiro — evita loop infinito por floating point
-  // (ex: 6000/9 = 666.666... → px nunca alcança pxEnd)
-  const zoneW = Math.max(1, Math.floor(bin.binW / numZones));
-  const zoneArea = bin.binH * zoneW;
 
-  // Calcula área preenchida por zona
-  const zoneFill = new Array(numZones).fill(0);
-  for (const p of pl) {
-    const z = Math.min(numZones - 1, Math.floor(p.x / zoneW));
-    // Uma peça pode ocupar múltiplas zonas — distribui proporcionalmente
-    const pxEnd = p.x + p.width;
-    let px = p.x;
-    while (px < pxEnd) {
-      const zz = Math.min(numZones - 1, Math.floor(px / zoneW));
-      const zzEnd = Math.min((zz + 1) * zoneW, pxEnd);
-      const slice = (zzEnd - px) / p.width; // fração desta peça nesta zona
-      zoneFill[zz] += p.width * p.height * slice;
-      px = zzEnd;
+  // Skip zonas quando zonaPct <= 1 (estratégias direcionais puras)
+  if (zonaPct > 1) {
+    const numZones = Math.max(1, Math.min(99, Math.round(zonaPct)));
+    // zoneW inteiro — evita loop infinito por floating point
+    // (ex: 6000/9 = 666.666... → px nunca alcança pxEnd)
+    const zoneW = Math.max(1, Math.floor(bin.binW / numZones));
+    const zoneArea = bin.binH * zoneW;
+
+    // Calcula área preenchida por zona
+    const zoneFill = new Array(numZones).fill(0);
+    for (const p of pl) {
+      const z = Math.min(numZones - 1, Math.floor(p.x / zoneW));
+      // Uma peça pode ocupar múltiplas zonas — distribui proporcionalmente
+      const pxEnd = p.x + p.width;
+      let px = p.x;
+      while (px < pxEnd) {
+        const zz = Math.min(numZones - 1, Math.floor(px / zoneW));
+        const zzEnd = Math.min((zz + 1) * zoneW, pxEnd);
+        const slice = (zzEnd - px) / p.width; // fração desta peça nesta zona
+        zoneFill[zz] += p.width * p.height * slice;
+        px = zzEnd;
+      }
     }
+
+    // Encontra a "fronteira" — primeira zona da esquerda com <80%
+    let frontier = -1;
+    for (let z = 0; z < numZones; z++) {
+      const ratio = zoneArea > 0 ? zoneFill[z] / zoneArea : 0;
+      if (ratio < 0.8) {
+        frontier = z;
+        break;
+      }
+    }
+    // Se todas ≥80%, não há penalidade
+    if (frontier < 0) frontier = numZones - 1;
+
+    // Penaliza peças além da fronteira
+    let zonePenalty = 0;
+    for (const p of pl) {
+      const z = Math.min(numZones - 1, Math.floor(p.x / zoneW));
+      if (z > frontier) {
+        const dist = (z - frontier) / Math.max(1, numZones - frontier);
+        zonePenalty += dist * (p.width * p.height) / Math.max(1, placedArea);
+      }
+    }
+    // zonePenalty: 0 (perfeito) a ~1 (tudo além da fronteira)
+    const zoneFactor = Math.max(0, 1 - zonePenalty * 0.5);
+
+    // Score final: combina compactness, fit, BRS e zone factor
+    const brsNorm = Math.min(1, largestFree / (bin.binW * bin.binH));
+    const rawScore = compactness * 0.25 + avgFit * 0.35 + brsNorm * 0.15;
+    return rawScore * zoneFactor;
   }
 
-  // Encontra a "fronteira" — primeira zona da esquerda com <80%
-  let frontier = -1;
-  for (let z = 0; z < numZones; z++) {
-    const ratio = zoneArea > 0 ? zoneFill[z] / zoneArea : 0;
-    if (ratio < 0.8) {
-      frontier = z;
-      break;
-    }
-  }
-  // Se todas ≥80%, não há penalidade
-  if (frontier < 0) frontier = numZones - 1;
-
-  // Penaliza peças além da fronteira
-  let zonePenalty = 0;
-  for (const p of pl) {
-    const z = Math.min(numZones - 1, Math.floor(p.x / zoneW));
-    if (z > frontier) {
-      const dist = (z - frontier) / Math.max(1, numZones - frontier);
-      zonePenalty += dist * (p.width * p.height) / Math.max(1, placedArea);
-    }
-  }
-  // zonePenalty: 0 (perfeito) a ~1 (tudo além da fronteira)
-  const zoneFactor = Math.max(0, 1 - zonePenalty * 0.5);
-
-  // Score final: combina compactness, fit, BRS e zone factor
+  // Sem zonas (zonaPct <= 1): score puro
   const brsNorm = Math.min(1, largestFree / (bin.binW * bin.binH));
-  const rawScore = compactness * 0.25 + avgFit * 0.35 + brsNorm * 0.15;
-  return rawScore * zoneFactor;
+  return compactness * 0.25 + avgFit * 0.35 + brsNorm * 0.15;
 }
 
 /**
@@ -1534,6 +1555,32 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
         clone._placedArea += placedRect.width * placedRect.height;
         clone._splitRect(i, opt.px, opt.py, opt.pw, opt.ph);
 
+        // ── Clip free rects that overlap the newly placed piece ──
+        // (mesmo clip do insert() — Beam Search pulava esta etapa)
+        const cx = opt.px, cy = opt.py, cw = opt.pw, ch = opt.ph;
+        for (let fi = clone.freeRects.length - 1; fi >= 0; fi--) {
+          const fr = clone.freeRects[fi];
+          if (fr.x >= cx + cw || fr.x + fr.w <= cx ||
+              fr.y >= cy + ch || fr.y + fr.h <= cy) continue;
+          const clipped = [];
+          if (fr.x < cx) clipped.push({ x: fr.x, y: fr.y, w: cx - fr.x, h: fr.h });
+          if (fr.x + fr.w > cx + cw) clipped.push({ x: cx + cw, y: fr.y, w: fr.x + fr.w - (cx + cw), h: fr.h });
+          if (fr.y < cy) {
+            const nx = Math.max(fr.x, cx);
+            const nw = Math.min(fr.x + fr.w, cx + cw) - nx;
+            if (nw > 0) clipped.push({ x: nx, y: fr.y, w: nw, h: cy - fr.y });
+          }
+          if (fr.y + fr.h > cy + ch) {
+            const nx = Math.max(fr.x, cx);
+            const nw = Math.min(fr.x + fr.w, cx + cw) - nx;
+            if (nw > 0) clipped.push({ x: nx, y: cy + ch, w: nw, h: fr.y + fr.h - (cy + ch) });
+          }
+          clone.freeRects.splice(fi, 1);
+          for (const c of clipped) {
+            if (c.w > 0 && c.h > 0) clone.freeRects.push(c);
+          }
+        }
+
         clone._lastPx = opt.px;
         clone._lastPy = opt.py;
         if (opt.px < clone._bboxMinX) clone._bboxMinX = opt.px;
@@ -1559,7 +1606,7 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
  * Retorna { placed, stillRemaining }.
  */
 function _beamNest(sortedPieces, sheetW, sheetH, opts) {
-  const rotation = opts.rotation !== false;
+  const rotation = opts.rotation === 'fit-only' ? 'fit-only' : opts.rotation !== false;
   const K = opts.beamWidth || 20;
   const margin = Math.max(0, opts.margin || 0);
   const direcao = opts.direcao || '';
