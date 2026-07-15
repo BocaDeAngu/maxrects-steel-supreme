@@ -97,20 +97,21 @@ function _strategyConfig(estrategia) {
 
     // ═══ Retângulo (2) — rectangular block + zones ═══
     // BAF (Best Area Fit): large piece→large space, small piece→small space.
-    // Minimizes leftover, high squareness, WITH zones (anti-spread).
+    // Otimizado via random search (N=500, 2026-07-15) c/ filtro material+espessura.
     case 2:
       return {
         label: 'Retângulo',
         direcao: '',
         sortComparator: (a, b) => (b.w * b.h) - (a.w * a.h),
-        lookAhead: 3,
-        splitBias: 50,
-        zonaPct: 80, // active zoning — forced horizontal compaction
+        lookAhead: 0,
+        splitBias: 54,
+        zonaPct: 86,
+        beamWidth: 20,
         tiers: {
-          tier2: { weight: 1.0, mode: 'baf' },
+          tier2: { weight: 4.76, mode: 'baf' },
           tier3: { weight: 0 },
-          tier4: { weight: 1.5 },
-          tier5: { weight: 4.0 },
+          tier4: { weight: 0 },
+          tier5: { weight: 4.75 },
           tiebreaker: { weight: 0 }
         }
       };
@@ -1047,10 +1048,11 @@ function _run(pieces, sheetDescriptors, opts) {
       if (remaining.length === 0) break;
 
       // ── Beam Search (quando beamWidth > 0) ────────────────
-      if (opts.beamWidth > 0) {
+      const beamW = opts.beamWidth > 0 ? opts.beamWidth : (strategyCfg?.beamWidth || 0);
+      if (beamW > 0) {
         const beamResult = _beamNest(remaining, effW, effH, {
           margin, rotation, direcao, estrategia,
-          beamWidth: opts.beamWidth,
+          beamWidth: beamW,
           tiers: opts.tiers,
           sortMode: opts.sortMode,
           splitBias: opts.splitBias,
@@ -1080,7 +1082,8 @@ function _run(pieces, sheetDescriptors, opts) {
         tiers: opts.tiers,
         sortMode: opts.sortMode,
         splitBias: opts.splitBias,
-        lookAheadOverride: opts.lookAheadOverride
+        lookAheadOverride: opts.lookAheadOverride,
+        zonaPct: opts.zonaPct
       });
       const placed = [];
       const stillRemaining = [];
