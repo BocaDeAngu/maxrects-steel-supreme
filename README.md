@@ -38,7 +38,7 @@ const result = nest(
     densidade: 0,        // material density g/cm³ (0=skip). Steel ≈ 7.85
     velocidadeCorte: 0,  // cutting constant mm²/min (0=skip)
     areaMinRetalho: 0,   // min waste area mm² (0=skip retalhos)
-    estrategia: 0,        // 0=Vertical, 1=Horizontal, 2=Retângulo (overrides `direcao`)
+    estrategia: 0,        // 0=Vertical, 1=Horizontal, 2=Supreme (overrides `direcao`)
     filterEspessura: 0,   // 1 = filter pieces by sheetEspessura (skip incompatible espessura)
     filterMaterial: 0,    // 1 = filter pieces by sheetMaterial (skip incompatible material)
     sheetEspessura: 0,    // sheet thickness (mm), used when filterEspessura=1
@@ -60,7 +60,7 @@ const result = nest(
 | `densidade` | `0` | Material density in g/cm³. When set (e.g. `7.85` for steel), calculates `peso_kg` per piece and `peso_total_kg` in stats. Requires `espessura_mm` on each piece |
 | `velocidadeCorte` | `0` | Cutting speed constant in mm²/min. Formula: `perim / (K / espessura)`. When set, calculates `tempo_corte_min` per piece and `perimetro_mm` |
 | `areaMinRetalho` | `0` | Minimum area in mm² for a waste rectangle to be reported. When set, generates `retalhos[]` per sheet |
-| `estrategia` | `-1` (disabled) | Packing strategy: `0` = Vertical (single column), `1` = Horizontal (single row), `2` = Retângulo (BRS + waste penalty, minimizes leftover). When set (0-2), overrides `direcao` and controls sort order, scoring tier weights, and split bias internally. `-1` = disabled — uses classic `direcao` mode for backward compatibility |
+| `estrategia` | `-1` (disabled) | Packing strategy: `0` = Vertical (single column), `1` = Horizontal (single row), `2` = Supreme (BRS + waste penalty + adaptive split, minimizes leftover). When set (0-2), overrides `direcao` and controls sort order, scoring tier weights, and split bias internally. `-1` = disabled — uses classic `direcao` mode for backward compatibility |
 | `filterEspessura` | `0` | When `1`, filters out pieces whose `espessura_mm` does not match the sheet's `espessura_mm` (or `sheetEspessura`). Pieces with `espessura_mm=0` (unspecified) pass through. Requires sheet to have `espessura_mm` (in multi-sheet mode) or `sheetEspessura` in opts (legacy single-sheet mode) |
 | `filterMaterial` | `0` | When `1`, filters out pieces whose `material` does not match the sheet's `material`. Pieces without `material` pass through. Requires sheet to have `material` (in multi-sheet mode) or `sheetMaterial` in opts (legacy single-sheet mode) |
 | `sheetEspessura` | `0` | Sheet thickness in mm. Used as fallback when `filterEspessura=1` and the sheet descriptor has no `espessura_mm`. Also used directly in legacy single-sheet mode |
@@ -137,6 +137,17 @@ When a piece is placed inside a free rectangle, the algorithm tests two split st
 fragmentation. After each placement, adjacent free rectangles are merged back together,
 reversing fragmentation over time.
 
+The **adaptive split** mode (enabled via `adaptiveSplit` in the strategy config) adds a
+heuristic inspired by [Jim Scott's binary-tree lightmap packer](https://blackpawn.com/texts/lightmaps/default.html):
+when a piece fills the free rectangle disproportionately in one dimension,
+the split direction is biased to leave a more usable leftover — wide pieces
+trigger a horizontal-first split (stacking in Y), tall pieces trigger a vertical-first
+split (extending in X).
+
+> **Credit:** Adaptive split heuristic based on the binary-tree packing approach described
+> by Jim Scott at [blackpawn.com/texts/lightmaps/default.html](https://blackpawn.com/texts/lightmaps/default.html).
+> Email: `jimscott@blackpawn.com`
+
 ### BRS (Best Remaining Space)
 
 For each candidate placement, simulates the split and scores by the **area of the
@@ -172,11 +183,11 @@ All parameters below are optional unless marked as required.
 | `lookAheadOverride` | `number` | `undefined` | Alternative override path for look-ahead (used by Beam Search internally) |
 | `maxSheets` | `number` | `0` | Max sheets (0 = unlimited). Upper bound — stops when pieces exhausted |
 | `direcao` | `string` | `''` | Nesting sense: `'vertical'` / `'horizontal'` / `''`. Overridden when `estrategia >= 0` |
-| `estrategia` | `number` | `-1` | Packing strategy: `0`=Vertical, `1`=Horizontal, `2`=Retângulo. Overrides `direcao` and controls sort, tiers, split bias internally. `-1` = disabled (classic direcao fallback) |
+| `estrategia` | `number` | `-1` | Packing strategy: `0`=Vertical, `1`=Horizontal, `2`=Supreme. Overrides `direcao` and controls sort, tiers, split bias internally. `-1` = disabled (classic direcao fallback) |
 | `sortMode` | `string` | `undefined` | Sort override: `'area-desc'` / `'width-desc'` / `'height-desc'`. Replaces the strategy's default sort |
-| `splitBias` | `number` | `undefined` | Override split bias (0-100). Strategy defaults: 40 (Vertical), 60 (Horizontal), 50 (Retângulo) |
+| `splitBias` | `number` | `undefined` | Override split bias (0-100). Strategy defaults: 40 (Vertical), 60 (Horizontal), 38 (Supreme) |
 | `tiers` | `object` | `undefined` | **Full tier override.** Pass `{ tier2: { weight, mode }, tier3: ... }` to replace the strategy's tier configuration entirely |
-| `zonaPct` | `number` | `strategyCfg.zonaPct ?? 80` | Zone percent (1-99). Controls horizontal compaction anti-spread. 1 = whole sheet (no zoning). Strategy defaults: 1 (Vertical/Horizontal), 80 (Retângulo) |
+| `zonaPct` | `number` | `strategyCfg.zonaPct ?? 80` | Zone percent (1-99). Controls horizontal compaction anti-spread. 1 = whole sheet (no zoning). Strategy defaults: 1 (Vertical/Horizontal), 17 (Supreme) |
 | `beamWidth` | `number` | `0` (disabled) | Beam Search width. When > 0, activates `_beamNest` tree search instead of the greedy loop |
 | `repeticoes` | `boolean` | `undefined` | When truthy, deduplicates identical sheet layouts and collapses them into `qtd_copias` |
 | `densidade` | `number` | `0` | Material density g/cm³ (e.g. 7.85 for steel). If > 0, calculates `peso_kg` per piece |
@@ -218,7 +229,7 @@ Each `estrategia` (0/1/2) has a built-in config. Every field can be overridden v
 
 #### Defaults per strategy
 
-| Field | Vertical (0) | Horizontal (1) | Retângulo (2) |
+| Field | Vertical (0) | Horizontal (1) | Supreme (2) |
 |-------|-------------|----------------|---------------|
 | `direcao` | `'vertical'` | `'horizontal'` | `''` (none) |
 | sort order | width-desc | height-desc | area-desc |
@@ -237,11 +248,11 @@ Each `estrategia` (0/1/2) has a built-in config. Every field can be overridden v
 |----------|---------|--------|
 | Vertical (0) | `cand.py × binArea / binH` | Higher Y = better → prefers BOTTOM rect → columns consume Y |
 | Horizontal (1) | `cand.px × binArea / binW` | Higher X = better → prefers RIGHT rect → rows consume X |
-| Retângulo (2) | BAF + zoning + squareness | Minimizes leftover, near-square blocks |
+| Supreme (2) | BAF + adaptive split + zoning | Minimizes leftover, near-square blocks with adaptive split |
 
 **Vertical and Horizontal** use pure position-based scoring (`mode: 'direcao'`) with `rotationMode: 'fit-only'` — no BRS, no waste penalty, no squareness, no look-ahead. The score simply rewards placements that consume the target axis. Rotation only occurs when the original orientation doesn't fit in any free rect — never for scoring advantage. This gives clear directional layouts without unnecessary rotation.
 
-**Retângulo** is independent and uses BAF for piece-to-space fit, strong waste penalty (tier4 × 1.5) and squareness bonus (tier5 × 4.0) with active zoning (zonaPct=80) and look-ahead depth 3 for compact rectangular blocks.
+**Supreme** is the advanced strategy: uses BAF for piece-to-space fit, adaptive split (threshold 0.5, inspired by the binary-tree lightmap packer), active zoning (zonaPct=17) with strong zone penalty, zone span penalty, and Beam Search (beamWidth=35) for compact rectangular blocks.
 
 ---
 

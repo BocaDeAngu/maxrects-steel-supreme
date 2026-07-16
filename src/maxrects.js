@@ -34,7 +34,7 @@
  *   Tier 5 — squareness bonus (prefer splits leaving near-square rects)
  *   Tiebreaker — direcao-based position preference
  *
- * @param {number} estrategia — 0=Vertical, 1=Horizontal, 2=Retângulo
+ * @param {number} estrategia — 0=Vertical, 1=Horizontal, 2=Supreme
  * @returns {object} config
  */
 const DEFAULT_TIERS = {
@@ -95,25 +95,30 @@ function _strategyConfig(estrategia) {
         }
       };
 
-    // ═══ Retângulo (2) — rectangular block + zones ═══
+    // ═══ Supreme (2) — rectangular block + zones + adaptive split ═══
     // BAF (Best Area Fit): large piece→large space, small piece→small space.
     // Otimizado via random search (N=500, 2026-07-15) c/ filtro material+espessura.
     case 2:
       return {
-        label: 'Retângulo',
+        label: 'Supreme',
         direcao: '',
         sortComparator: (a, b) => (b.w * b.h) - (a.w * a.h),
         lookAhead: 0,
-        splitBias: 54,
-        zonaPct: 86,
-        beamWidth: 20,
+        splitBias: 38,
+        zonaPct: 17,
+        beamWidth: 35,
         tiers: {
           tier2: { weight: 4.76, mode: 'baf' },
           tier3: { weight: 0 },
           tier4: { weight: 0 },
           tier5: { weight: 4.75 },
           tiebreaker: { weight: 0 }
-        }
+        },
+        scoreLayoutWeights: { compactness: 0.69, avgFit: 0.95, brsNorm: 0.17 },
+        adaptiveSplit: 0.5,
+        zoneThreshold: 0.99,
+        zonePenalty: 5.0,
+        zoneSpanWeight: 0.5
       };
   }
 }
@@ -129,11 +134,12 @@ class MaxRectsBin {
    * @param {object} [opts] - Configuration object
    * @param {number} [opts.margin=0]     - Gap between pieces
    * @param {string} [opts.direcao='']   - 'vertical'|'horizontal'|''
-   * @param {number} [opts.estrategia=0]  - 0=Vertical, 1=Horizontal, 2=Retângulo
+   * @param {number} [opts.estrategia=0]  - 0=Vertical, 1=Horizontal, 2=Supreme
    * @param {object} [opts.tiers]        - Override tiers for the strategy
    * @param {string} [opts.sortMode]     - Override sort mode
    * @param {number} [opts.splitBias]    - Override split bias
    * @param {number} [opts.lookAheadOverride] - Override look-ahead depth
+   * @param {object} [opts.scoreLayoutWeights] - Override _scoreLayout weights { compactness, avgFit, brsNorm }
    */
   constructor(width, height, opts = {}) {
     this.binW = width;
@@ -172,10 +178,26 @@ class MaxRectsBin {
         this._strategy.lookAhead = opts.lookAheadOverride;
       }
       // zonaPct da estratégia, com override externo se explícito
-      this._zonaPct = opts.zonaPct !== undefined ? opts.zonaPct : (cfg.zonaPct || 80);
+      this._strategy.zonaPct = opts.zonaPct !== undefined ? opts.zonaPct : (cfg.zonaPct || 80);
+      // scoreLayoutWeights, com override externo se explícito
+      if (opts.scoreLayoutWeights) {
+        this._strategy.scoreLayoutWeights = opts.scoreLayoutWeights;
+      }
+      // Parâmetros de zoneamento, com override externo
+      if (opts.zoneThreshold !== undefined) {
+        this._strategy.zoneThreshold = opts.zoneThreshold;
+      }
+      if (opts.zonePenalty !== undefined) {
+        this._strategy.zonePenalty = opts.zonePenalty;
+      }
+      if (opts.adaptiveSplit !== undefined) {
+        this._strategy.adaptiveSplit = opts.adaptiveSplit;
+      }
+      if (opts.zoneSpanWeight !== undefined) {
+        this._strategy.zoneSpanWeight = opts.zoneSpanWeight;
+      }
     } else {
       this._strategy = null;
-      this._zonaPct = opts.zonaPct || 80;
     }
 
     this._lastPx = -1;
@@ -217,7 +239,6 @@ class MaxRectsBin {
     c._strategy = this._strategy
       ? JSON.parse(JSON.stringify(this._strategy))
       : null;
-    c._zonaPct = this._zonaPct;
     return c;
   }
 
@@ -633,6 +654,22 @@ class MaxRectsBin {
       }
     }
 
+    // ── Adaptive split (lightmap-inspired) ──────────────
+    // Quando a peça preenche >60% de uma dimensão, favorece
+    // o split que empilha na outra dimensão.
+    //   Peça larga (fillW > adaptThreshold) → inflate maxV → hFirst
+    //   Peça alta  (fillH > adaptThreshold) → inflate maxH → vFirst
+    const adaptThreshold = this._strategy?.adaptiveSplit ?? 0;
+    if (adaptThreshold > 0) {
+      const fillW = pw / fr.w;
+      const fillH = ph / fr.h;
+      if (fillW > adaptThreshold && fillH < adaptThreshold) {
+        maxV *= 2; // wide piece → prefer horizontal split (stack Y)
+      } else if (fillH > adaptThreshold && fillW < adaptThreshold) {
+        maxH *= 2; // tall piece → prefer vertical split (extend X)
+      }
+    }
+
     const chosen = maxV <= maxH ? vFirst : hFirst;
 
     for (const r of chosen) {
@@ -784,38 +821,49 @@ class MaxRectsBin {
    * @param {Array} placed - Array de peças colocadas { x, y, width, height }
    * @param {number} margin - Margem entre peças em mm
    */
-  compactLayout(placed, margin) {
-    if (placed.length < 2) return;
-    const m = Math.max(0, margin || 0);
+}
 
-    // Ordena por distância da origem (mais próximo primeiro)
-    const sorted = [...placed].sort((a, b) => (a.x + a.y) - (b.x + b.y));
+/**
+ * Compactação pós-posicionamento: move cada peça o máximo possível
+ * em direção à origem (0,0) sem colidir com as demais.
+ * Reduz a Dimensão da Distribuição (bbox) sem alterar a alocação.
+ *
+ * Usada tanto no greedy path quanto no Beam Search.
+ *
+ * @param {Array} placed - Array de peças { x, y, width, height, ... }
+ * @param {number} margin - Margem entre peças em mm
+ */
+function _compactLayout(placed, margin) {
+  if (placed.length < 2) return;
+  const m = Math.max(0, margin || 0);
 
-    for (const piece of sorted) {
-      // 1. Tentar mover para esquerda (diminuir X)
-      // Step grosso primeiro, depois refina
-      const coarse = [16, 8, 5, 1];
-      let bestX = piece.x;
-      for (const step of coarse) {
-        for (let tx = bestX - step; tx >= 0 && tx < piece.x; tx -= step) {
-          if (!_rectCollides(tx, piece.y, piece.width, piece.height, piece, placed, m)) {
-            bestX = tx;
-          } else break;
-        }
+  // Ordena por distância da origem (mais próximo primeiro)
+  const sorted = [...placed].sort((a, b) => (a.x + a.y) - (b.x + b.y));
+
+  for (const piece of sorted) {
+    // 1. Tentar mover para esquerda (diminuir X)
+    // Step grosso primeiro, depois refina
+    const coarse = [16, 8, 5, 1];
+    let bestX = piece.x;
+    for (const step of coarse) {
+      for (let tx = bestX - step; tx >= 0 && tx < piece.x; tx -= step) {
+        if (!_rectCollides(tx, piece.y, piece.width, piece.height, piece, placed, m)) {
+          bestX = tx;
+        } else break;
       }
-      piece.x = bestX;
-
-      // 2. Tentar mover para baixo (diminuir Y)
-      let bestY = piece.y;
-      for (const step of coarse) {
-        for (let ty = bestY - step; ty >= 0 && ty < piece.y; ty -= step) {
-          if (!_rectCollides(piece.x, ty, piece.width, piece.height, piece, placed, m)) {
-            bestY = ty;
-          } else break;
-        }
-      }
-      piece.y = bestY;
     }
+    piece.x = bestX;
+
+    // 2. Tentar mover para baixo (diminuir Y)
+    let bestY = piece.y;
+    for (const step of coarse) {
+      for (let ty = bestY - step; ty >= 0 && ty < piece.y; ty -= step) {
+        if (!_rectCollides(piece.x, ty, piece.width, piece.height, piece, placed, m)) {
+          bestY = ty;
+        } else break;
+      }
+    }
+    piece.y = bestY;
   }
 }
 
@@ -886,7 +934,7 @@ function _rectOverlapsAny(x, y, w, h, placed, margin) {
  * @param {number}  [opts.velocidadeCorte=0] - Cutting constant mm²/min (0 = skip). Formula: perim / (K / esp)
  * @param {number}  [opts.areaMinRetalho=0]  - Min waste area in mm² (0 = skip retalhos)
  * @param {string}  [opts.direcao='']        - Nesting sense: '' (auto), 'vertical' (prefer width), 'horizontal' (prefer height)
- * @param {number}  [opts.estrategia=-1]     - 0=Vertical (colunas), 1=Horizontal (fileiras), 2=Retângulo (BRS+waste). Overrides direcao when set (0-2). -1=disabled.
+ * @param {number}  [opts.estrategia=-1]     - 0=Vertical (colunas), 1=Horizontal (fileiras), 2=Supreme (BRS+waste+adaptive). Overrides direcao when set (0-2). -1=disabled.
  *
  * @returns {{ sheets: Array, stats: object, unplaced: number }}
  */
@@ -938,6 +986,21 @@ function _run(pieces, sheetDescriptors, opts) {
   }
   if (strategyCfg && opts.lookAheadOverride !== undefined) {
     strategyCfg.lookAhead = opts.lookAheadOverride;
+  }
+  if (strategyCfg && opts.scoreLayoutWeights !== undefined) {
+    strategyCfg.scoreLayoutWeights = opts.scoreLayoutWeights;
+  }
+  if (strategyCfg && opts.zoneThreshold !== undefined) {
+    strategyCfg.zoneThreshold = opts.zoneThreshold;
+  }
+  if (strategyCfg && opts.zonePenalty !== undefined) {
+    strategyCfg.zonePenalty = opts.zonePenalty;
+  }
+  if (strategyCfg && opts.zoneSpanWeight !== undefined) {
+    strategyCfg.zoneSpanWeight = opts.zoneSpanWeight;
+  }
+  if (strategyCfg && opts.adaptiveSplit !== undefined) {
+    strategyCfg.adaptiveSplit = opts.adaptiveSplit;
   }
 
   // rotationMode da estratégia: 'fit-only' → só rotaciona se original não couber
@@ -1048,7 +1111,9 @@ function _run(pieces, sheetDescriptors, opts) {
       if (remaining.length === 0) break;
 
       // ── Beam Search (quando beamWidth > 0) ────────────────
-      const beamW = opts.beamWidth > 0 ? opts.beamWidth : (strategyCfg?.beamWidth || 0);
+      const beamW = opts.beamWidth !== undefined && opts.beamWidth !== null
+        ? opts.beamWidth
+        : (strategyCfg?.beamWidth || 0);
       if (beamW > 0) {
         const beamResult = _beamNest(remaining, effW, effH, {
           margin, rotation, direcao, estrategia,
@@ -1057,7 +1122,12 @@ function _run(pieces, sheetDescriptors, opts) {
           sortMode: opts.sortMode,
           splitBias: opts.splitBias,
           lookAheadOverride: opts.lookAheadOverride,
-          zonaPct: opts.zonaPct
+          zonaPct: opts.zonaPct,
+          scoreLayoutWeights: strategyCfg?.scoreLayoutWeights,
+          zoneThreshold: strategyCfg?.zoneThreshold,
+          zonePenalty: strategyCfg?.zonePenalty,
+          zoneSpanWeight: strategyCfg?.zoneSpanWeight,
+          adaptiveSplit: strategyCfg?.adaptiveSplit
         });
 
         if (beamResult.placed.length === 0) break;
@@ -1083,7 +1153,12 @@ function _run(pieces, sheetDescriptors, opts) {
         sortMode: opts.sortMode,
         splitBias: opts.splitBias,
         lookAheadOverride: opts.lookAheadOverride,
-        zonaPct: opts.zonaPct
+        zonaPct: opts.zonaPct,
+        scoreLayoutWeights: strategyCfg?.scoreLayoutWeights,
+        zoneThreshold: strategyCfg?.zoneThreshold,
+        zonePenalty: strategyCfg?.zonePenalty,
+        zoneSpanWeight: strategyCfg?.zoneSpanWeight,
+        adaptiveSplit: strategyCfg?.adaptiveSplit
       });
       const placed = [];
       const stillRemaining = [];
@@ -1141,7 +1216,7 @@ function _run(pieces, sheetDescriptors, opts) {
       // ── Pós-compactação: reduz Dimensão Distrib. ─────────
       // Move cada peça o máximo possível para a origem sem colidir,
       // eliminando gaps e tiras inúteis dentro do bbox.
-      bin.compactLayout(placed, margin);
+      _compactLayout(placed, margin);
 
       const usedArea = placed.reduce((s, p) => s + p.area, 0);
       groupSheets.push({
@@ -1447,7 +1522,7 @@ function _scoreLayout(bin, remaining, rotation) {
   // Se zona anterior não está >80% cheia, peças em zonas
   // posteriores são penalizadas. Força preenchimento vertical
   // antes de espalhar horizontalmente.
-  const zonaPct = bin._zonaPct || 80; // default apôs backtest
+  const zonaPct = bin._strategy?.zonaPct || 80; // default pós backtest
 
   // Skip zonas quando zonaPct <= 1 (estratégias direcionais puras)
   if (zonaPct > 1) {
@@ -1473,11 +1548,12 @@ function _scoreLayout(bin, remaining, rotation) {
       }
     }
 
-    // Encontra a "fronteira" — primeira zona da esquerda com <80%
+    // Encontra a "fronteira" — primeira zona da esquerda com <threshold%
+    const zThreshold = bin._strategy?.zoneThreshold ?? 0.8;
     let frontier = -1;
     for (let z = 0; z < numZones; z++) {
       const ratio = zoneArea > 0 ? zoneFill[z] / zoneArea : 0;
-      if (ratio < 0.8) {
+      if (ratio < zThreshold) {
         frontier = z;
         break;
       }
@@ -1495,17 +1571,30 @@ function _scoreLayout(bin, remaining, rotation) {
       }
     }
     // zonePenalty: 0 (perfeito) a ~1 (tudo além da fronteira)
-    const zoneFactor = Math.max(0, 1 - zonePenalty * 0.5);
+    const zPenalty = bin._strategy?.zonePenalty ?? 0.5;
+    let zoneFactor = Math.max(0, 1 - zonePenalty * zPenalty);
+
+    // ── Span penalty: penaliza nº de zonas ocupadas ────────
+    // Se o layout ocupa >50% da largura da chapa, sofre penalidade adicional.
+    // Força distribuições mais compactas horizontalmente.
+    const zSpanW = bin._strategy?.zoneSpanWeight ?? 0;
+    if (zSpanW > 0 && numZones > 1) {
+      const spanRatio = (frontier + 1) / numZones;
+      const spanPenalty = Math.max(0, spanRatio - 0.5) * zSpanW;
+      zoneFactor *= Math.max(0, 1 - spanPenalty);
+    }
 
     // Score final: combina compactness, fit, BRS e zone factor
     const brsNorm = Math.min(1, largestFree / (bin.binW * bin.binH));
-    const rawScore = compactness * 0.25 + avgFit * 0.35 + brsNorm * 0.15;
+    const slw = bin._strategy?.scoreLayoutWeights || { compactness: 0.25, avgFit: 0.35, brsNorm: 0.15 };
+    const rawScore = compactness * slw.compactness + avgFit * slw.avgFit + brsNorm * slw.brsNorm;
     return rawScore * zoneFactor;
   }
 
   // Sem zonas (zonaPct <= 1): score puro
   const brsNorm = Math.min(1, largestFree / (bin.binW * bin.binH));
-  return compactness * 0.25 + avgFit * 0.35 + brsNorm * 0.15;
+  const slw = bin._strategy?.scoreLayoutWeights || { compactness: 0.25, avgFit: 0.35, brsNorm: 0.15 };
+  return compactness * slw.compactness + avgFit * slw.avgFit + brsNorm * slw.brsNorm;
 }
 
 /**
@@ -1610,7 +1699,7 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
  */
 function _beamNest(sortedPieces, sheetW, sheetH, opts) {
   const rotation = opts.rotation === 'fit-only' ? 'fit-only' : opts.rotation !== false;
-  const K = opts.beamWidth || 20;
+  const K = opts.beamWidth !== undefined && opts.beamWidth !== null ? opts.beamWidth : 20;
   const margin = Math.max(0, opts.margin || 0);
   const direcao = opts.direcao || '';
   const estrategia = opts.estrategia != null ? opts.estrategia : -1;
@@ -1622,7 +1711,12 @@ function _beamNest(sortedPieces, sheetW, sheetH, opts) {
     sortMode: opts.sortMode,
     splitBias: opts.splitBias,
     lookAheadOverride: opts.lookAheadOverride,
-    zonaPct: opts.zonaPct
+    zonaPct: opts.zonaPct,
+    scoreLayoutWeights: opts.scoreLayoutWeights,
+    zoneThreshold: opts.zoneThreshold,
+    zonePenalty: opts.zonePenalty,
+    zoneSpanWeight: opts.zoneSpanWeight,
+    adaptiveSplit: opts.adaptiveSplit
   });
 
   let beam = [{ bin: initialBin, score: 0 }];
@@ -1644,6 +1738,10 @@ function _beamNest(sortedPieces, sheetW, sheetH, opts) {
 
   // Retorna o melhor caminho
   const best = beam.reduce((a, b) => a.score > b.score ? a : b, beam[0]);
+  // Compactação pós-posicionamento (como no greedy path)
+  if (best && best.bin.placed.length > 0) {
+    _compactLayout(best.bin.placed, margin);
+  }
   return {
     placed: best ? best.bin.placed : [],
     stillRemaining

@@ -5,7 +5,7 @@
  *   const { nest } = require('maxrects-steel-supreme');
  *   const result = nest(pieces, 2000, 1000, { margin: 10, lookAhead: 1, estrategia: 2 });
  *
- * Strategies: 0=Vertical, 1=Horizontal, 2=Retângulo (BRS+waste)
+ * Strategies: 0=Vertical, 1=Horizontal, 2=Supreme (BRS+waste+adaptive)
  */
 
 const { nest } = require('./src/maxrects');
