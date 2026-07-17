@@ -1068,21 +1068,26 @@ function _run(pieces, sheetDescriptors, opts) {
     if (remaining.length === 0) break;
 
     // ── Filtro opcional por espessura ──────────────────────
-    if (opts.filterEspessura) {
+    // Garante que peças de espessuras diferentes NÃO sejam colocadas na mesma chapa.
+    // Quando chapa não tem espessura (grpEsp=0), infere da primeira peça disponível.
+    if (opts.filterEspessura && remaining.length > 0) {
       const grpEsp = parseFloat(String(grp.espessura_mm != null ? grp.espessura_mm : opts.sheetEspessura).replace(',', '.')) || 0;
-      if (grpEsp > 0) {
-        remaining = remaining.filter(p =>
-          !p.espessura_mm || Math.abs(p.espessura_mm - grpEsp) < 0.01
-        );
+      const effectiveEsp = (grpEsp > 0) ? grpEsp : (parseFloat(remaining[0].espessura_mm) || 0);
+      if (effectiveEsp > 0) {
+        remaining = remaining.filter(p => {
+          const pe = parseFloat(p.espessura_mm) || 0;
+          return pe > 0 && Math.abs(pe - effectiveEsp) < 0.01;
+        });
         if (remaining.length === 0) continue;
       }
     }
 
     // ── Filtro opcional por material ───────────────────────
-    if (opts.filterMaterial) {
+    // Garante que peças de materiais diferentes NÃO sejam misturadas na mesma chapa.
+    if (opts.filterMaterial && remaining.length > 0) {
       const grpMat = grp.material || opts.sheetMaterial || '';
       if (grpMat) {
-        remaining = remaining.filter(p => !p.material || p.material === grpMat);
+        remaining = remaining.filter(p => p.material && p.material === grpMat);
         if (remaining.length === 0) continue;
       }
     }
