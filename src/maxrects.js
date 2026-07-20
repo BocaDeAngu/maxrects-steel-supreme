@@ -146,7 +146,16 @@ class MaxRectsBin {
     this.binH = height;
     this.margin = opts.margin || 0;
     this.direcao = opts.direcao || '';
-    this.freeRects = [{ x: 0, y: 0, w: width, h: height }];
+    // NOVO: freeRects opcional (polígono). Quando omitido, 1 ret = chapa inteira.
+    this.freeRects = opts.freeRects
+      ? opts.freeRects.map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h }))
+      : [{ x: 0, y: 0, w: width, h: height }];
+    // NOVO: áreas não-usáveis dentro do bounding box do polígono
+    this.voidRects = opts.voidRects
+      ? opts.voidRects.map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h }))
+      : [];
+    // NOVO: snapshot dos retângulos originais — usado no merge check
+    this.sheetRects = this.freeRects.map(r => ({ ...r }));
     this.placed = [];
 
     // estrategia -1 = backward compat (classic direcao mode, no overrides)
@@ -239,6 +248,8 @@ class MaxRectsBin {
     c._strategy = this._strategy
       ? JSON.parse(JSON.stringify(this._strategy))
       : null;
+    c.voidRects = this.voidRects.map(r => ({ ...r }));
+    c.sheetRects = this.sheetRects.map(r => ({ ...r }));
     return c;
   }
 
@@ -373,6 +384,34 @@ class MaxRectsBin {
       this.freeRects.splice(fi, 1);
       for (const c of clipped) {
         if (c.w > 0 && c.h > 0) this.freeRects.push(c);
+      }
+    }
+
+    // NOVO: clip também contra voidRects (polígono)
+    for (let fi = this.freeRects.length - 1; fi >= 0; fi--) {
+      const fr = this.freeRects[fi];
+      for (const vr of this.voidRects) {
+        if (fr.x >= vr.x + vr.w || fr.x + fr.w <= vr.x ||
+            fr.y >= vr.y + vr.h || fr.y + fr.h <= vr.y) continue;
+        // Clip: subtrai void rect do free rect
+        const clipped = [];
+        if (fr.x < vr.x) clipped.push({ x: fr.x, y: fr.y, w: vr.x - fr.x, h: fr.h });
+        if (fr.x + fr.w > vr.x + vr.w) clipped.push({ x: vr.x + vr.w, y: fr.y, w: fr.x + fr.w - (vr.x + vr.w), h: fr.h });
+        if (fr.y < vr.y) {
+          const nx = Math.max(fr.x, vr.x);
+          const nw = Math.min(fr.x + fr.w, vr.x + vr.w) - nx;
+          if (nw > 0) clipped.push({ x: nx, y: fr.y, w: nw, h: vr.y - fr.y });
+        }
+        if (fr.y + fr.h > vr.y + vr.h) {
+          const nx = Math.max(fr.x, vr.x);
+          const nw = Math.min(fr.x + fr.w, vr.x + vr.w) - nx;
+          if (nw > 0) clipped.push({ x: nx, y: vr.y + vr.h, w: nw, h: fr.y + fr.h - (vr.y + vr.h) });
+        }
+        this.freeRects.splice(fi, 1);
+        for (const c of clipped) {
+          if (c.w > 0 && c.h > 0) this.freeRects.push(c);
+        }
+        break; // fr alterado, próximo fi
       }
     }
 
@@ -763,6 +802,10 @@ class MaxRectsBin {
               const uy = Math.min(a.y, b.y);
               const uw = Math.max(a.x + a.w, b.x + b.w) - ux;
               const uh = Math.max(a.y + a.h, b.y + b.h) - uy;
+              // NOVO: não mergear se união extrapola sheetRect original (polígono)
+              if (this.sheetRects.length > 0 && !_rectContainedInAny(ux, uy, uw, uh, this.sheetRects)) {
+                continue;
+              }
               if (!_rectOverlapsAny(ux, uy, uw, uh, this.placed, this.margin)) {
                 a.x = ux; a.y = uy; a.w = uw; a.h = uh;
                 list.splice(j, 1); dirty = true; break;
@@ -778,6 +821,10 @@ class MaxRectsBin {
               const uy = Math.min(a.y, b.y);
               const uw = Math.max(a.x + a.w, b.x + b.w) - ux;
               const uh = Math.max(a.y + a.h, b.y + b.h) - uy;
+              // NOVO: não mergear se união extrapola sheetRect original (polígono)
+              if (this.sheetRects.length > 0 && !_rectContainedInAny(ux, uy, uw, uh, this.sheetRects)) {
+                continue;
+              }
               if (!_rectOverlapsAny(ux, uy, uw, uh, this.placed, this.margin)) {
                 a.x = ux; a.y = uy; a.w = uw; a.h = uh;
                 list.splice(j, 1); dirty = true; break;
@@ -901,6 +948,47 @@ function _rectOverlapsAny(x, y, w, h, placed, margin) {
     }
   }
   return false;
+}
+
+/** True if rect (x,y,w,h) is fully contained in ANY of the given rects */
+function _rectContainedInAny(x, y, w, h, rects) {
+  for (const r of rects) {
+    if (x >= r.x && y >= r.y &&
+        x + w <= r.x + r.w &&
+        y + h <= r.y + r.h) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Calcula voidRects (áreas não-usáveis) dados freeRects e bounding box.
+ * Algoritmo: começa com bounding box, subtrai cada free rect, gera N retângulos.
+ */
+function _calcVoidRects(freeRects, bbW, bbH) {
+  if (freeRects.length <= 1) return [];
+  let remaining = [{ x: 0, y: 0, w: bbW, h: bbH }];
+  for (const fr of freeRects) {
+    const next = [];
+    for (const r of remaining) {
+      // Subtrai fr de r: até 4 retângulos
+      if (fr.x > r.x) next.push({ x: r.x, y: r.y, w: fr.x - r.x, h: r.h });
+      if (fr.x + fr.w < r.x + r.w) next.push({ x: fr.x + fr.w, y: r.y, w: r.x + r.w - (fr.x + fr.w), h: r.h });
+      if (fr.y > r.y) {
+        const ol = Math.max(r.x, fr.x);
+        const or = Math.min(r.x + r.w, fr.x + fr.w);
+        if (ol < or) next.push({ x: ol, y: r.y, w: or - ol, h: fr.y - r.y });
+      }
+      if (fr.y + fr.h < r.y + r.h) {
+        const ol = Math.max(r.x, fr.x);
+        const or = Math.min(r.x + r.w, fr.x + fr.w);
+        if (ol < or) next.push({ x: ol, y: fr.y + fr.h, w: or - ol, h: r.y + r.h - (fr.y + fr.h) });
+      }
+    }
+    remaining = next.filter(rr => rr.w > 0 && rr.h > 0);
+  }
+  return remaining;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1056,9 +1144,11 @@ function _run(pieces, sheetDescriptors, opts) {
   }
 
   // ── Sort sheets by area ASCENDING (smallest sheet first) ──
-  const sortedSheets = [...sheetDescriptors].sort(
-    (a, b) => (a.width * a.height) - (b.width * b.height)
-  );
+  const sortedSheets = [...sheetDescriptors].sort((a, b) => {
+    const aa = (a.boundingWidth || a.width) * (a.boundingHeight || a.height);
+    const bb = (b.boundingWidth || b.width) * (b.boundingHeight || b.height);
+    return aa - bb;
+  });
 
   const allSheets = [];
   let remaining = [...sorted];
@@ -1092,9 +1182,10 @@ function _run(pieces, sheetDescriptors, opts) {
       }
     }
 
-    const sheetW = grp.width;
-    const sheetH = grp.height;
-    const maxSheets = grp.count || 0; // 0 = unlimited for this group
+    // NOVO: sheet descriptor retangular vs polígono
+    const sheetW = grp.boundingWidth || grp.width;
+    const sheetH = grp.boundingHeight || grp.height;
+    const maxSheets = grp.count || 0;
 
     const effW = sheetW - 2 * bordaMm;
     const effH = sheetH - 2 * bordaMm;
@@ -1102,6 +1193,10 @@ function _run(pieces, sheetDescriptors, opts) {
 
     const sheetArea = effW * effH;
     const groupSheets = [];
+
+    // NOVO: prepara freeRects/voidRects para polígono
+    const grpFreeRects = grp.freeRects;
+    const grpVoidRects = grp.voidRects || (grpFreeRects ? _calcVoidRects(grpFreeRects, effW, effH) : null);
 
     // ── Run MaxRects for this sheet group ──────────────────
     let _loopGuard = 0;
@@ -1132,7 +1227,10 @@ function _run(pieces, sheetDescriptors, opts) {
           zoneThreshold: strategyCfg?.zoneThreshold,
           zonePenalty: strategyCfg?.zonePenalty,
           zoneSpanWeight: strategyCfg?.zoneSpanWeight,
-          adaptiveSplit: strategyCfg?.adaptiveSplit
+          adaptiveSplit: strategyCfg?.adaptiveSplit,
+          // NOVO: polígono
+          freeRects: grpFreeRects,
+          voidRects: grpVoidRects
         });
 
         if (beamResult.placed.length === 0) break;
@@ -1152,7 +1250,7 @@ function _run(pieces, sheetDescriptors, opts) {
         continue;
       }
 
-      const bin = new MaxRectsBin(effW, effH, {
+      const binOpts = {
         margin, direcao, estrategia,
         tiers: opts.tiers,
         sortMode: opts.sortMode,
@@ -1164,7 +1262,13 @@ function _run(pieces, sheetDescriptors, opts) {
         zonePenalty: strategyCfg?.zonePenalty,
         zoneSpanWeight: strategyCfg?.zoneSpanWeight,
         adaptiveSplit: strategyCfg?.adaptiveSplit
-      });
+      };
+      // NOVO: polígono
+      if (grpFreeRects) {
+        binOpts.freeRects = grpFreeRects;
+        binOpts.voidRects = grpVoidRects;
+      }
+      const bin = new MaxRectsBin(effW, effH, binOpts);
       const placed = [];
       const stillRemaining = [];
 
@@ -1721,7 +1825,9 @@ function _beamNest(sortedPieces, sheetW, sheetH, opts) {
     zoneThreshold: opts.zoneThreshold,
     zonePenalty: opts.zonePenalty,
     zoneSpanWeight: opts.zoneSpanWeight,
-    adaptiveSplit: opts.adaptiveSplit
+    adaptiveSplit: opts.adaptiveSplit,
+    freeRects: opts.freeRects,
+    voidRects: opts.voidRects
   });
 
   let beam = [{ bin: initialBin, score: 0 }];
@@ -1753,4 +1859,4 @@ function _beamNest(sortedPieces, sheetW, sheetH, opts) {
   };
 }
 
-module.exports = { MaxRectsBin, nest };
+module.exports = { MaxRectsBin, nest, _calcVoidRects };
