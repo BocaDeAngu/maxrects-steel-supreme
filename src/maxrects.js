@@ -1117,7 +1117,8 @@ function _run(pieces, sheetDescriptors, opts) {
         w, h,
         label: p.label || '',
         material: p.material || '',
-        espessura_mm: p.espessura_mm || 0
+        espessura_mm: p.espessura_mm || 0,
+        origem_id: p.origem_id
       });
     }
   }
@@ -1284,6 +1285,7 @@ function _run(pieces, sheetDescriptors, opts) {
           pos.label = piece.label;
           pos.material = piece.material || '';
           pos.espessura_mm = piece.espessura_mm || 0;
+          pos.origem_id = piece.origem_id;
           pos.area = piece.w * piece.h;
           placed.push(pos);
         } else {
@@ -1310,6 +1312,7 @@ function _run(pieces, sheetDescriptors, opts) {
             pos.label = piece.label;
             pos.material = piece.material || '';
             pos.espessura_mm = piece.espessura_mm || 0;
+            pos.origem_id = piece.origem_id;
             pos.area = piece.w * piece.h;
             placed.push(pos);
           } else {
@@ -1750,6 +1753,7 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
           label: piece.label || '',
           material: piece.material || '',
           espessura_mm: piece.espessura_mm || 0,
+          origem_id: piece.origem_id,
           area: piece.w * piece.h
         };
         clone.placed.push(placedRect);
