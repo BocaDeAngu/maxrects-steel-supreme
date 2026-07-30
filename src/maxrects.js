@@ -1202,6 +1202,25 @@ function _run(pieces, sheetDescriptors, opts) {
     // ── Run MaxRects for this sheet group ──────────────────
     let _loopGuard = 0;
 
+    // Separa peças que excedem a chapa — o algoritmo não as trata e pode entrar em loop infinito (Beam Search)
+    // Considera margin entre peças e rotação (se ativa): a peça cabe em qualquer orientação
+    const tooLarge = remaining.filter(p => {
+      const mw = p.w + margin, mh = p.h + margin;
+      const fitsNormal = mw <= effW && mh <= effH;
+      const fitsRotated = rotation && mh <= effW && mw <= effH;
+      return !fitsNormal && !fitsRotated;
+    });
+    if (tooLarge.length > 0) {
+      console.log('[maxrects] tooLarge=' + tooLarge.length + ' remaining=' + (remaining.length - tooLarge.length) + ' eff=' + effW + 'x' + effH + ' margin=' + margin);
+      const fitSet = new Set(tooLarge);
+      remaining = remaining.filter(p => !fitSet.has(p));
+      if (remaining.length === 0) {
+        // Todas as peças são maiores que a chapa — pula grupo
+        remaining.push(...tooLarge);
+        continue;
+      }
+    }
+
     // maxSheets = limite superior de chapas deste grupo.
     // NÃO reutilizar/reciclar peças para "encher" maxSheets.
     // maxSheets diz "não use mais que N", não "use exatamente N".
@@ -1216,6 +1235,7 @@ function _run(pieces, sheetDescriptors, opts) {
         ? opts.beamWidth
         : (strategyCfg?.beamWidth || 0);
       if (beamW > 0) {
+        if (remaining.length > 0) console.log('[maxrects] beamNest pieces=' + remaining.length + ' sheet=' + effW + 'x' + effH);
         const beamResult = _beamNest(remaining, effW, effH, {
           margin, rotation, direcao, estrategia,
           beamWidth: beamW,
@@ -1387,6 +1407,11 @@ function _run(pieces, sheetDescriptors, opts) {
           s[key] = grp[key];
         }
       }
+    }
+
+    // Reintegra peças que excediam esta chapa — podem caber em grupos com chapas maiores
+    if (tooLarge.length > 0) {
+      remaining.push(...tooLarge);
     }
 
     allSheets.push(...groupSheets);
@@ -1841,10 +1866,18 @@ function _beamNest(sortedPieces, sheetW, sheetH, opts) {
     const piece = sortedPieces[pi];
     const remaining = sortedPieces.slice(pi + 1);
 
+    // Guard: peça maior que a chapa em qualquer orientação → não tenta posicionar
+    const mw = piece.w + margin, mh = piece.h + margin;
+    const fitsSheet = (mw <= sheetW && mh <= sheetH) || (rotation && mh <= sheetW && mw <= sheetH);
+    if (!fitsSheet) {
+      stillRemaining.push(piece);
+      continue;
+    }
+
     const newBeam = _beamInsert(beam, piece, remaining, K, rotation);
 
     if (newBeam.length === 0) {
-      // Peça não coube em nenhum caminho
+      // Peça não coube em nenhum free rect disponível
       stillRemaining.push(piece);
     } else {
       beam = newBeam;
