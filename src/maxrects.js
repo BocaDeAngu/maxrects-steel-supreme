@@ -1837,16 +1837,7 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
  */
 function _beamNest(sortedPieces, sheetW, sheetH, opts) {
   const rotation = opts.rotation === 'fit-only' ? 'fit-only' : opts.rotation !== false;
-  let K = opts.beamWidth !== undefined && opts.beamWidth !== null ? opts.beamWidth : 20;
-  // Beam adaptativo: K proporcional a 10/n — 30 peças → K~12, 300 peças → K=1
-  // Garante tempo previsível independente de sheet size.
-  if (sortedPieces.length > 0) {
-    const adaptive = Math.max(1, Math.min(K, Math.round(10 / sortedPieces.length * K)));
-    if (adaptive < K) {
-      console.log('[maxrects] adaptive beamWidth: ' + K + ' -> ' + adaptive + ' (pieces=' + sortedPieces.length + ')');
-      K = adaptive;
-    }
-  }
+  const K = opts.beamWidth !== undefined && opts.beamWidth !== null ? opts.beamWidth : 20;
   const margin = Math.max(0, opts.margin || 0);
   const direcao = opts.direcao || '';
   const estrategia = opts.estrategia != null ? opts.estrategia : -1;
