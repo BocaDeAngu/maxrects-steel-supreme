@@ -1155,7 +1155,9 @@ function _run(pieces, sheetDescriptors, opts) {
   let remaining = [...sorted];
   let totalUnplaced = 0;
 
+  console.log('[maxrects:trace] _run inicio — grupos=' + sortedSheets.length + ' pecas=' + sorted.length + ' borda=' + bordaMm + ' margin=' + margin + ' rot=' + rotation + ' est=' + estrategia);
   for (const grp of sortedSheets) {
+    console.log('[maxrects:trace] grupo — w=' + grp.width + ' h=' + grp.height + ' count=' + grp.count + ' remaining=' + remaining.length);
     if (remaining.length === 0) break;
 
     // ── Filtro opcional por espessura ──────────────────────
@@ -1235,7 +1237,10 @@ function _run(pieces, sheetDescriptors, opts) {
         ? opts.beamWidth
         : (strategyCfg?.beamWidth || 0);
       if (beamW > 0) {
-        if (remaining.length > 0) console.log('[maxrects] beamNest pieces=' + remaining.length + ' sheet=' + effW + 'x' + effH);
+        if (remaining.length > 0) {
+          console.log('[maxrects] beamNest pieces=' + remaining.length + ' sheet=' + effW + 'x' + effH);
+          console.time('[maxrects:trace] beamNest');
+        }
         const beamResult = _beamNest(remaining, effW, effH, {
           margin, rotation, direcao, estrategia,
           beamWidth: beamW,
@@ -1253,6 +1258,7 @@ function _run(pieces, sheetDescriptors, opts) {
           freeRects: grpFreeRects,
           voidRects: grpVoidRects
         });
+        if (remaining.length > 0) console.timeEnd('[maxrects:trace] beamNest');
 
         if (beamResult.placed.length === 0) break;
 
@@ -1496,6 +1502,7 @@ function _run(pieces, sheetDescriptors, opts) {
     stats.retalhosAproveitaveis = allSheets.reduce((s, sh) => s + (sh.retalhos || []).length, 0);
   }
 
+  console.log('[maxrects:trace] _run fim — placed=' + totalPiecesPlaced + ' unplaced=' + totalUnplaced + ' sheets=' + allSheets.length);
   return { sheets: allSheets, stats, unplaced: totalUnplaced };
 }
 
