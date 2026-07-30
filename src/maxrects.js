@@ -1688,6 +1688,8 @@ function _scoreLayout(bin, remaining, rotation) {
         const zzEnd = Math.min((zz + 1) * zoneW, pxEnd);
         const slice = (zzEnd - px) / p.width; // fração desta peça nesta zona
         zoneFill[zz] += p.width * p.height * slice;
+        // cp: guard contra loop infinito quando px atinge boundary da última zona
+        if (zzEnd <= px) break;
         px = zzEnd;
       }
     }
