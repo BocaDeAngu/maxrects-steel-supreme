@@ -1020,7 +1020,7 @@ function _calcVoidRects(freeRects, bbW, bbH) {
  * @param {number}  [opts.borda_mm=0]        - Sheet border deducted from each edge (mm)
  * @param {number}  [opts.densidade=0]       - Material density g/cm³ (0 = skip). Steel ≈ 7.85
  * @param {number}  [opts.velocidadeCorte=0] - Cutting constant mm²/min (0 = skip). Formula: perim / (K / esp)
- * @param {number}  [opts.areaMinRetalho=0]  - Min waste area in mm² (0 = skip retalhos)
+ * @param {number}  [opts.minDimensaoRetalho=0] - Min scrap dimension in mm (0 = skip retalhos). Retalho aproveitável se min(largura, altura) ≥ valor.
  * @param {string}  [opts.direcao='']        - Nesting sense: '' (auto), 'vertical' (prefer width), 'horizontal' (prefer height)
  * @param {number}  [opts.estrategia=-1]     - 0=Vertical (colunas), 1=Horizontal (fileiras), 2=Supreme (BRS+waste+adaptive). Overrides direcao when set (0-2). -1=disabled.
  *
@@ -1047,7 +1047,7 @@ function _run(pieces, sheetDescriptors, opts) {
   const bordaMm = Math.max(0, opts.borda_mm || 0);
   const densidade = parseFloat(opts.densidade) || 0;
   const velocidadeCorte = parseFloat(opts.velocidadeCorte) || 0;
-  const areaMinRetalho = Math.max(0, parseInt(opts.areaMinRetalho, 10) || 0);
+  const minDimensaoRetalho = Math.max(0, parseInt(opts.minDimensaoRetalho, 10) || 0);
   const direcao = ['vertical', 'horizontal'].includes(opts.direcao) ? opts.direcao : '';
   const estrategia = [0, 1, 2].includes(opts.estrategia) ? opts.estrategia : -1;
 
@@ -1439,6 +1439,13 @@ function _run(pieces, sheetDescriptors, opts) {
     let sheetPeso = 0;
     let sheetTempo = 0;
 
+    // Retalhos — computa em coordenadas efetivas (peças ainda SEM offset de borda)
+    if (minDimensaoRetalho > 0) {
+      const effWr = sheet.sheetWidth - 2 * bordaMm;
+      const effHr = sheet.sheetHeight - 2 * bordaMm;
+      sheet.retalhos = _calcScrap(sheet.pieces, effWr, effHr, minDimensaoRetalho, margin);
+    }
+
     for (const p of sheet.pieces) {
       // Border offset
       if (bordaMm > 0) {
@@ -1476,9 +1483,9 @@ function _run(pieces, sheetDescriptors, opts) {
       tempoTotal += sheetTempo;
     }
 
-    // Retalhos
-    if (areaMinRetalho > 0) {
-      sheet.retalhos = _calcScrap(sheet.pieces, sheet.sheetWidth, sheet.sheetHeight, areaMinRetalho);
+    // Retalhos acompanham o offset de borda aplicado nas peças
+    if (bordaMm > 0 && sheet.retalhos) {
+      for (const r of sheet.retalhos) { r.x += bordaMm; r.y += bordaMm; }
     }
   }
 
@@ -1498,7 +1505,7 @@ function _run(pieces, sheetDescriptors, opts) {
   if (velocidadeCorte > 0) {
     stats.tempo_corte_total_min = Math.round(tempoTotal * 100) / 100;
   }
-  if (areaMinRetalho > 0) {
+  if (minDimensaoRetalho > 0) {
     stats.retalhosAproveitaveis = allSheets.reduce((s, sh) => s + (sh.retalhos || []).length, 0);
   }
 
@@ -1514,18 +1521,39 @@ function _run(pieces, sheetDescriptors, opts) {
  * Scan placed pieces and find rectangular gaps (scrap / waste).
  *
  * Divides the sheet into horizontal strips at each piece's top and bottom
- * edges, then finds empty runs within each strip.
+ * edges (plus sheet bounds 0..sheetH), then finds empty runs within each strip.
+ *
+ * A gap is reported as retalho (reusable scrap) only when BOTH dimensions
+ * minus the cutting margin reach the minimum useful dimension:
+ *   min(gapW, stripH) - margin >= minDim
+ * Axis does not matter. Everything below the threshold is loss (perda).
  */
-function _calcScrap(pieces, sheetW, sheetH, areaMin) {
+function _calcScrap(pieces, sheetW, sheetH, minDim, margin) {
   if (!pieces || pieces.length === 0) return [];
 
   const occupied = pieces.map(p => ({ x: p.x, y: p.y, w: p.width, h: p.height }));
 
   const ySet = new Set();
   for (const o of occupied) { ySet.add(o.y); ySet.add(o.y + o.h); }
+  ySet.add(0);      // faixa inicial — espaço livre abaixo da 1ª peça
+  ySet.add(sheetH); // faixa final — espaço livre acima da última peça
   const yPoints = [...ySet].sort((a, b) => a - b);
 
   const retalhos = [];
+
+  function addGap(x, y, gapW, stripH) {
+    const utilW = gapW - margin;
+    const utilH = stripH - margin;
+    if (utilW >= minDim && utilH >= minDim) {
+      retalhos.push({
+        x: Math.round(x * 10) / 10,
+        y: Math.round(y * 10) / 10,
+        width: Math.round(gapW * 10) / 10,
+        height: Math.round(stripH * 10) / 10,
+        area: Math.round(gapW * stripH * 100) / 100
+      });
+    }
+  }
 
   for (let yi = 0; yi < yPoints.length - 1; yi++) {
     const y0 = yPoints[yi];
@@ -1541,32 +1569,14 @@ function _calcScrap(pieces, sheetW, sheetH, areaMin) {
     let cursorX = 0;
     for (const o of occ) {
       if (o.x > cursorX + 1) {
-        const gapW = o.x - cursorX;
-        if (gapW * stripH >= areaMin) {
-          retalhos.push({
-            x: Math.round(cursorX * 10) / 10,
-            y: Math.round(y0 * 10) / 10,
-            width: Math.round(gapW * 10) / 10,
-            height: Math.round(stripH * 10) / 10,
-            area: Math.round(gapW * stripH * 100) / 100
-          });
-        }
+        addGap(cursorX, y0, o.x - cursorX, stripH);
       }
       if (o.x + o.w > cursorX) cursorX = o.x + o.w;
     }
 
     // Gap at right edge
     if (sheetW > cursorX + 1) {
-      const gapW = sheetW - cursorX;
-      if (gapW * stripH >= areaMin) {
-        retalhos.push({
-          x: Math.round(cursorX * 10) / 10,
-          y: Math.round(y0 * 10) / 10,
-          width: Math.round(gapW * 10) / 10,
-          height: Math.round(stripH * 10) / 10,
-          area: Math.round(gapW * stripH * 100) / 100
-        });
-      }
+      addGap(cursorX, y0, sheetW - cursorX, stripH);
     }
   }
 

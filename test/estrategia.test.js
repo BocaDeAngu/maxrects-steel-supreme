@@ -83,7 +83,7 @@ test('ESTR2: no overlap with dense packing', () => {
 test('ESTR2: retalhos are generated with estrategia=2', () => {
   const result = nest([
     { w: 500, h: 500, label: 'A' }
-  ], 1000, 1000, { estrategia: 2, areaMinRetalho: 10000, margin: 0 });
+  ], 1000, 1000, { estrategia: 2, minDimensaoRetalho: 100, margin: 0 });
 
   assert.strictEqual(result.unplaced, 0, 'Placed');
   const sheet = result.sheets[0];

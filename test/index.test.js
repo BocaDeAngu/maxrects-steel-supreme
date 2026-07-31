@@ -271,7 +271,7 @@ test('PLACEMENT: margin between pieces', () => {
 });
 
 // ═════════════════════════════════════════════════════════════
-//  New parameters: borda_mm, densidade, velocidadeCorte, areaMinRetalho
+//  New parameters: borda_mm, densidade, velocidadeCorte, minDimensaoRetalho
 // ═════════════════════════════════════════════════════════════
 
 test('borda_mm: offsets pieces and reduces effective area', () => {
@@ -315,10 +315,10 @@ test('velocidadeCorte: calculates cutting time per piece', () => {
   assert(result.stats.tempo_corte_total_min !== undefined, 'stats exists');
 });
 
-test('areaMinRetalho: generates retalhos when enough space', () => {
+test('minDimensaoRetalho: generates retalhos when enough space', () => {
   const result = nest([
     { w: 500, h: 500, label: 'A' }
-  ], 1000, 1000, { areaMinRetalho: 10000, lookAhead: 0 });
+  ], 1000, 1000, { minDimensaoRetalho: 100, lookAhead: 0 });
 
   assert.strictEqual(result.unplaced, 0, 'Piece placed');
   const sheet = result.sheets[0];
@@ -327,7 +327,27 @@ test('areaMinRetalho: generates retalhos when enough space', () => {
   assert(result.stats.retalhosAproveitaveis > 0, 'stats counts retalhos');
 });
 
-test('borda_mm + densidade + velocidadeCorte + areaMinRetalho together', () => {
+test('minDimensaoRetalho: thin strip below threshold is perda (not retalho)', () => {
+  // Tira de 80mm de largura × 1000mm: área grande mas minDim=80 < 100 → perda
+  const result = nest([
+    { w: 920, h: 1000, label: 'A' }
+  ], 1000, 1000, { minDimensaoRetalho: 100, lookAhead: 0 });
+
+  assert.strictEqual(result.unplaced, 0, 'Piece placed');
+  const sheet = result.sheets[0];
+  assert.strictEqual(sheet.retalhos.length, 0, 'Thin strip (80mm) must not be retalho');
+});
+
+test('minDimensaoRetalho: 0 skips retalhos entirely', () => {
+  const result = nest([
+    { w: 500, h: 500, label: 'A' }
+  ], 1000, 1000, { minDimensaoRetalho: 0, lookAhead: 0 });
+
+  assert.strictEqual(result.unplaced, 0, 'Piece placed');
+  assert(result.sheets[0].retalhos === undefined, 'retalhos absent when 0');
+});
+
+test('borda_mm + densidade + velocidadeCorte + minDimensaoRetalho together', () => {
   const result = nest([
     { w: 800, h: 600, label: 'A', espessura_mm: 3 },
     { w: 400, h: 300, label: 'B', espessura_mm: 3 }
@@ -335,7 +355,7 @@ test('borda_mm + densidade + velocidadeCorte + areaMinRetalho together', () => {
     borda_mm: 10,
     densidade: 7.85,
     velocidadeCorte: 12700,
-    areaMinRetalho: 5000,
+    minDimensaoRetalho: 100,
     margin: 5,
     lookAhead: 1
   });

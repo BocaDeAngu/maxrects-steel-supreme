@@ -37,7 +37,7 @@ const result = nest(
     sentido: '',          // nesting direction: '' (auto), 'largura', 'comprimento'
     densidade: 0,        // material density g/cm³ (0=skip). Steel ≈ 7.85
     velocidadeCorte: 0,  // cutting constant mm²/min (0=skip)
-    areaMinRetalho: 0,   // min waste area mm² (0=skip retalhos)
+    minDimensaoRetalho: 100, // min scrap dimension (mm); retalho se min(largura, altura) ≥ valor (0=skip)
     estrategia: 0,        // 0=Vertical, 1=Horizontal, 2=Supreme (overrides `direcao`)
     filterEspessura: 0,   // 1 = filter pieces by sheetEspessura (skip incompatible espessura)
     filterMaterial: 0,    // 1 = filter pieces by sheetMaterial (skip incompatible material)
@@ -59,7 +59,7 @@ const result = nest(
 | `sentido` | `''` | Nesting direction preference. `'largura'` prioritizes horizontal rows (full-width strips). `'comprimento'` prioritizes vertical columns (full-height strips). Empty string = automatic |
 | `densidade` | `0` | Material density in g/cm³. When set (e.g. `7.85` for steel), calculates `peso_kg` per piece and `peso_total_kg` in stats. Requires `espessura_mm` on each piece |
 | `velocidadeCorte` | `0` | Cutting speed constant in mm²/min. Formula: `perim / (K / espessura)`. When set, calculates `tempo_corte_min` per piece and `perimetro_mm` |
-| `areaMinRetalho` | `0` | Minimum area in mm² for a waste rectangle to be reported. When set, generates `retalhos[]` per sheet |
+| `minDimensaoRetalho` | `0` | Minimum useful dimension in mm (applies to BOTH width and height — axis does not matter). A free gap is reported as retalho only when `min(largura, altura) - margin ≥ valor`; below that it is perda. `0` = skip retalhos entirely |
 | `estrategia` | `-1` (disabled) | Packing strategy: `0` = Vertical (single column), `1` = Horizontal (single row), `2` = Supreme (BRS + waste penalty + adaptive split, minimizes leftover). When set (0-2), overrides `direcao` and controls sort order, scoring tier weights, and split bias internally. `-1` = disabled — uses classic `direcao` mode for backward compatibility |
 | `filterEspessura` | `0` | When `1`, filters out pieces whose `espessura_mm` does not match the sheet's `espessura_mm` (or `sheetEspessura`). Pieces with `espessura_mm=0` (unspecified) pass through. Requires sheet to have `espessura_mm` (in multi-sheet mode) or `sheetEspessura` in opts (legacy single-sheet mode) |
 | `filterMaterial` | `0` | When `1`, filters out pieces whose `material` does not match the sheet's `material`. Pieces without `material` pass through. Requires sheet to have `material` (in multi-sheet mode) or `sheetMaterial` in opts (legacy single-sheet mode) |
@@ -192,7 +192,7 @@ All parameters below are optional unless marked as required.
 | `repeticoes` | `boolean` | `undefined` | When truthy, deduplicates identical sheet layouts and collapses them into `qtd_copias` |
 | `densidade` | `number` | `0` | Material density g/cm³ (e.g. 7.85 for steel). If > 0, calculates `peso_kg` per piece |
 | `velocidadeCorte` | `number` | `0` | Cutting constant mm²/min. If > 0, calculates `tempo_corte_min = perim / (K / esp)` |
-| `areaMinRetalho` | `number` | `0` | Minimum waste area in mm² to report retalhos. If > 0, generates `sheet.retalhos[]` |
+| `minDimensaoRetalho` | `number` | `0` | Minimum useful dimension (mm) for retalho. Gap vira retalho só se `min(largura, altura) - margin ≥ valor`. `0` = skip retalhos |
 | `filterEspessura` | `number` | `0` | When `1`, filters out pieces whose `espessura_mm` doesn't match the sheet's |
 | `filterMaterial` | `number` | `0` | When `1`, filters out pieces whose `material` doesn't match the sheet's |
 | `sheetEspessura` | `number` | `0` | Fallback sheet thickness when sheet descriptor has no `espessura_mm` |

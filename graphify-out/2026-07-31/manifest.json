@@ -1,0 +1,132 @@
+{
+  "_test_fix.js": {
+    "mtime": 1783939228.605724,
+    "ast_hash": "e94ff5850d51bd25b23d7f0f6340b3d9",
+    "semantic_hash": ""
+  },
+  "benchmark-baseline.json": {
+    "mtime": 1783973973.191687,
+    "ast_hash": "1e534f2c148a917731cdec4ef7db539c",
+    "semantic_hash": ""
+  },
+  "benchmark-deepseek.json": {
+    "mtime": 1783964005.6036804,
+    "ast_hash": "20032a77486ac682ca51f8d938d8eed3",
+    "semantic_hash": ""
+  },
+  "benchmark.js": {
+    "mtime": 1783977597.032404,
+    "ast_hash": "e187c41f85041cb4756bbef34fac587e",
+    "semantic_hash": ""
+  },
+  "bin/cli.js": {
+    "mtime": 1783966254.3596573,
+    "ast_hash": "605dec98435a5a3337700f82898db69c",
+    "semantic_hash": ""
+  },
+  "index.js": {
+    "mtime": 1784196986.3990307,
+    "ast_hash": "1549e4c175cdcb5314eb6d02b5c6cac6",
+    "semantic_hash": ""
+  },
+  "package.json": {
+    "mtime": 1783939228.6077251,
+    "ast_hash": "1c7a996fc0c3c7c744273035d3fe65cc",
+    "semantic_hash": ""
+  },
+  "src/maxrects.js": {
+    "mtime": 1785445751.2522428,
+    "ast_hash": "9f9bda6c1db6901bb7c92baab678e744",
+    "semantic_hash": ""
+  },
+  "src/sort.js": {
+    "mtime": 1783977577.252713,
+    "ast_hash": "9f187d8d06082de43e17a6a24b339b22",
+    "semantic_hash": ""
+  },
+  "test/estrategia.test.js": {
+    "mtime": 1784132271.2960374,
+    "ast_hash": "23c64c3f87a24b7420b416c45cd29db8",
+    "semantic_hash": ""
+  },
+  "test/index.test.js": {
+    "mtime": 1784130087.1190917,
+    "ast_hash": "a236fbf4a3cc6a4c9a97b33fd4a8222a",
+    "semantic_hash": ""
+  },
+  "test/validate-layout.mjs": {
+    "mtime": 1784131823.4148524,
+    "ast_hash": "0fbd53290f7da2d4a5a8a6ce0c6e9386",
+    "semantic_hash": ""
+  },
+  "tmp_borda.js": {
+    "mtime": 1783977577.2637124,
+    "ast_hash": "8e20bb1e2f64f65d50536515995839b5",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1784197014.1467185,
+    "ast_hash": "308c0e8e507051563a170c00b67b8494",
+    "semantic_hash": ""
+  },
+  "_output.txt": {
+    "mtime": 1784129737.0835943,
+    "ast_hash": "bf3ca506475278368e5339d251c55737",
+    "semantic_hash": ""
+  },
+  "test/output/Chapa_SAC_350__real____Estrategia_0_sheet0.svg": {
+    "mtime": 1784132281.6058486,
+    "ast_hash": "0c9bb230eeed80b6cadc2e3333ae8e6f",
+    "semantic_hash": ""
+  },
+  "test/output/Chapa_SAC_350__real____Estrategia_2_sheet0.svg": {
+    "mtime": 1784132281.6038375,
+    "ast_hash": "417af8abb8579d8949e6d74e057fe61a",
+    "semantic_hash": ""
+  },
+  "test/output/Grande_Peq___Estrategia_2_sheet0.svg": {
+    "mtime": 1784132281.5958376,
+    "ast_hash": "8a88c0fa0ec3ebda74a93fc899fef429",
+    "semantic_hash": ""
+  },
+  "test/output/Grande_Peq___Greedy__0__sheet0.svg": {
+    "mtime": 1784132281.5938356,
+    "ast_hash": "58161c52b9fc2b55e97b472e2394b170",
+    "semantic_hash": ""
+  },
+  "test/output/Horizontal_Misto___Estrategia_1_sheet0.svg": {
+    "mtime": 1784132281.5998454,
+    "ast_hash": "8cf5cb79df81dabc7a8d2c33a609e2c3",
+    "semantic_hash": ""
+  },
+  "test/output/Misto_G_M_P_X___Beam__5__sheet0.svg": {
+    "mtime": 1784132281.592836,
+    "ast_hash": "93ba015ab71e3f11a842370f2fa03dfe",
+    "semantic_hash": ""
+  },
+  "test/output/Misto_G_M_P_X___Greedy__0__sheet0.svg": {
+    "mtime": 1784132281.5818367,
+    "ast_hash": "9cd09b1201b87a2a74fc18fa913bdfaa",
+    "semantic_hash": ""
+  },
+  "test/output/Retangulo_Misto___Estrategia_2_sheet0.svg": {
+    "mtime": 1784132281.6018376,
+    "ast_hash": "996b11ef20d652b272c68e59c8d8153f",
+    "semantic_hash": ""
+  },
+  "test/output/Vertical_Misto___Estrategia_0_sheet0.svg": {
+    "mtime": 1784132281.5978374,
+    "ast_hash": "49c84a55fa6798f26bce47235f4c1eb7",
+    "semantic_hash": ""
+  },
+  "tests/polygon-sheet.test.js": {
+    "mtime": 1784563867.9925792,
+    "ast_hash": "cdf81b5a29b39737798a125eaa6a0ada",
+    "semantic_hash": ""
+  },
+  "test/timeout-scenario.json": {
+    "mtime": 1785444359.9333472,
+    "ast_hash": "75f4de004a76a5dff6bc8ed30083459d",
+    "semantic_hash": ""
+  }
+}
