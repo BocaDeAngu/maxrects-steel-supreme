@@ -1,0 +1,18 @@
+{
+  "pieces": [
+    {"w": 1100, "h": 5000, "label": "wide", "quantity": 10},
+    {"w": 100, "h": 5987, "label": "fullH", "quantity": 20},
+    {"w": 1197, "h": 2000, "label": "fullW", "quantity": 10},
+    {"w": 100, "h": 200, "label": "tiny", "quantity": 100}
+  ],
+  "sheetW": 1210,
+  "sheetH": 6000,
+  "options": {
+    "margin": 3,
+    "rotation": true,
+    "estrategia": 2,
+    "borda_mm": 5,
+    "filterEspessura": false,
+    "filterMaterial": false
+  }
+}

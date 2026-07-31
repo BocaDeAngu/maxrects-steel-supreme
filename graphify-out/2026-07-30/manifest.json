@@ -25,8 +25,8 @@
     "semantic_hash": ""
   },
   "index.js": {
-    "mtime": 1784114696.4688063,
-    "ast_hash": "2e57a4a46e9e694a1451acf349fdf8df",
+    "mtime": 1784196986.3990307,
+    "ast_hash": "1549e4c175cdcb5314eb6d02b5c6cac6",
     "semantic_hash": ""
   },
   "package.json": {
@@ -35,8 +35,8 @@
     "semantic_hash": ""
   },
   "src/maxrects.js": {
-    "mtime": 1784144680.2313662,
-    "ast_hash": "c3070372cd8e0f53fcdac0516436bfaf",
+    "mtime": 1785442036.658192,
+    "ast_hash": "b432eca4cda118505daffb4174e28f29",
     "semantic_hash": ""
   },
   "src/sort.js": {
@@ -65,8 +65,8 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1784145072.5918508,
-    "ast_hash": "23e6a444ec5b829db2c9e860c6cc6d9b",
+    "mtime": 1784197014.1467185,
+    "ast_hash": "308c0e8e507051563a170c00b67b8494",
     "semantic_hash": ""
   },
   "_output.txt": {
@@ -117,6 +117,11 @@
   "test/output/Vertical_Misto___Estrategia_0_sheet0.svg": {
     "mtime": 1784132281.5978374,
     "ast_hash": "49c84a55fa6798f26bce47235f4c1eb7",
+    "semantic_hash": ""
+  },
+  "tests/polygon-sheet.test.js": {
+    "mtime": 1784563867.9925792,
+    "ast_hash": "cdf81b5a29b39737798a125eaa6a0ada",
     "semantic_hash": ""
   }
 }
