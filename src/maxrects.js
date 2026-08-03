@@ -209,6 +209,15 @@ class MaxRectsBin {
       this._strategy = null;
     }
 
+    // Pré-computa zoneamento — _scoreLayout usa campos incrementais
+    // (recalcular por candidato era O(placed) no beam)
+    const zp0 = this._strategy ? (this._strategy.zonaPct || 80) : 80;
+    this._zoneNum = Math.max(1, Math.min(99, Math.round(zp0)));
+    this._zoneW = Math.max(1, Math.floor(this.binW / this._zoneNum));
+    this._zoneArea = this.binH * this._zoneW;
+    this._zoneFill = new Array(this._zoneNum).fill(0);   // área por zona (span proporcional)
+    this._zoneOrigin = new Array(this._zoneNum).fill(0); // área por zona (origem da peça)
+
     this._lastPx = -1;
     this._lastPy = -1;
     this._bboxMinX = Infinity;
@@ -232,8 +241,12 @@ class MaxRectsBin {
     c.margin = this.margin;
     c.direcao = this.direcao;
     c.estrategia = this.estrategia;
-    c.freeRects = this.freeRects.map(r => ({ ...r }));
-    c.placed = this.placed.map(p => ({ ...p }));
+    c.freeRects = this.freeRects.slice();
+    // Objetos placed são imutáveis durante o beam (só o compact final muta x/y do vencedor);
+    // compartilhar referências elimina O(placed) cópias de objeto por candidato.
+    // freeRects/voidRects/sheetRects: mesmo princípio — o beam só faz splice/push
+    // (nunca muta objeto); o merge dos vencedores copia antes de mutar (copy-on-write).
+    c.placed = this.placed.slice();
     c._placedArea = this._placedArea;
     c._bboxMinX = this._bboxMinX;
     c._bboxMinY = this._bboxMinY;
@@ -245,11 +258,14 @@ class MaxRectsBin {
     c._alignW = this._alignW;
     c._alignH = this._alignH;
     c._alignAnchorPos = this._alignAnchorPos;
-    c._strategy = this._strategy
-      ? JSON.parse(JSON.stringify(this._strategy))
-      : null;
-    c.voidRects = this.voidRects.map(r => ({ ...r }));
-    c.sheetRects = this.sheetRects.map(r => ({ ...r }));
+    c._strategy = this._strategy; // read-only após o constructor — clone JSON era desperdício
+    c._zoneNum = this._zoneNum;
+    c._zoneW = this._zoneW;
+    c._zoneArea = this._zoneArea;
+    c._zoneFill = this._zoneFill.slice();
+    c._zoneOrigin = this._zoneOrigin.slice();
+    c.voidRects = this.voidRects.slice();
+    c.sheetRects = this.sheetRects.slice();
     return c;
   }
 
@@ -666,7 +682,7 @@ class MaxRectsBin {
   //  Split — standard MaxRects (vertical-first vs horizontal-first)
   // ──────────────────────────────────────────────────────────
 
-  _splitRect(idx, px, py, pw, ph) {
+  _splitRect(idx, px, py, pw, ph, skipMaintain, minW) {
     const fr = this.freeRects[idx];
     this.freeRects.splice(idx, 1);
 
@@ -711,12 +727,18 @@ class MaxRectsBin {
 
     const chosen = maxV <= maxH ? vFirst : hFirst;
 
+    // minW (opcional): descarta pedaços menores que a menor peça restante —
+    // nenhuma peça futura os usaria. Só o beam passa (greedy mantém tudo).
     for (const r of chosen) {
-      if (r.w > 0 && r.h > 0) this.freeRects.push(r);
+      if (r.w > 0 && r.h > 0 && (!minW || (r.w >= minW && r.h >= minW))) this.freeRects.push(r);
     }
 
-    this._mergeFreeRects();
-    this._prune();
+    // Merge/prune são O(fr² × placed) — no beam isso roda por CANDIDATO.
+    // O beam faz merge/prune uma vez nos vencedores (top-K) por peça.
+    if (!skipMaintain) {
+      this._mergeFreeRects();
+      this._prune();
+    }
   }
 
   /**
@@ -772,11 +794,11 @@ class MaxRectsBin {
           // ── Standard: mesma fileira ──
           if (a.y === b.y && a.h === b.h) {
             if (a.x + a.w === b.x) {
-              b.x = a.x; b.w = a.w + b.w;
+              list[j] = { ...b, x: a.x, w: a.w + b.w };
               list.splice(i, 1); dirty = true; break;
             }
             if (b.x + b.w === a.x) {
-              b.w = a.w + b.w;
+              list[j] = { ...b, w: a.w + b.w };
               list.splice(i, 1); dirty = true; break;
             }
           }
@@ -784,11 +806,11 @@ class MaxRectsBin {
           // ── Standard: mesma coluna ──
           if (a.x === b.x && a.w === b.w) {
             if (a.y + a.h === b.y) {
-              b.y = a.y; b.h = a.h + b.h;
+              list[j] = { ...b, y: a.y, h: a.h + b.h };
               list.splice(i, 1); dirty = true; break;
             }
             if (b.y + b.h === a.y) {
-              b.h = a.h + b.h;
+              list[j] = { ...b, h: a.h + b.h };
               list.splice(i, 1); dirty = true; break;
             }
           }
@@ -807,7 +829,7 @@ class MaxRectsBin {
                 continue;
               }
               if (!_rectOverlapsAny(ux, uy, uw, uh, this.placed, this.margin)) {
-                a.x = ux; a.y = uy; a.w = uw; a.h = uh;
+                list[i] = { ...a, x: ux, y: uy, w: uw, h: uh };
                 list.splice(j, 1); dirty = true; break;
               }
             }
@@ -826,7 +848,7 @@ class MaxRectsBin {
                 continue;
               }
               if (!_rectOverlapsAny(ux, uy, uw, uh, this.placed, this.margin)) {
-                a.x = ux; a.y = uy; a.w = uw; a.h = uh;
+                list[i] = { ...a, x: ux, y: uy, w: uw, h: uh };
                 list.splice(j, 1); dirty = true; break;
               }
             }
@@ -1099,10 +1121,6 @@ function _run(pieces, sheetDescriptors, opts) {
   // Estrategia define lookAhead greedy (0) vs BRS (10); opts.lookAhead sobrepõe
   const lookAhead = opts.lookAhead !== undefined ? opts.lookAhead : (strategyCfg?.lookAhead ?? 1);
 
-  if (estrategia >= 0) {
-    console.log('[estrategia] usando estrategia=' + estrategia + ' (' + (strategyCfg?.label || '?') + ') direcao=' + (strategyCfg?.direcao || ''));
-  }
-
   const { sortByAreaDesc } = require('./sort');
 
   // Expand quantities, carrying extra fields
@@ -1155,9 +1173,7 @@ function _run(pieces, sheetDescriptors, opts) {
   let remaining = [...sorted];
   let totalUnplaced = 0;
 
-  console.log('[maxrects:trace] _run inicio — grupos=' + sortedSheets.length + ' pecas=' + sorted.length + ' borda=' + bordaMm + ' margin=' + margin + ' rot=' + rotation + ' est=' + estrategia);
   for (const grp of sortedSheets) {
-    console.log('[maxrects:trace] grupo — w=' + grp.width + ' h=' + grp.height + ' count=' + grp.count + ' remaining=' + remaining.length);
     if (remaining.length === 0) break;
 
     // ── Filtro opcional por espessura ──────────────────────
@@ -1213,7 +1229,6 @@ function _run(pieces, sheetDescriptors, opts) {
       return !fitsNormal && !fitsRotated;
     });
     if (tooLarge.length > 0) {
-      console.log('[maxrects] tooLarge=' + tooLarge.length + ' remaining=' + (remaining.length - tooLarge.length) + ' eff=' + effW + 'x' + effH + ' margin=' + margin);
       const fitSet = new Set(tooLarge);
       remaining = remaining.filter(p => !fitSet.has(p));
       if (remaining.length === 0) {
@@ -1237,10 +1252,6 @@ function _run(pieces, sheetDescriptors, opts) {
         ? opts.beamWidth
         : (strategyCfg?.beamWidth || 0);
       if (beamW > 0) {
-        if (remaining.length > 0) {
-          console.log('[maxrects] beamNest pieces=' + remaining.length + ' sheet=' + effW + 'x' + effH);
-          console.time('[maxrects:trace] beamNest');
-        }
         const beamResult = _beamNest(remaining, effW, effH, {
           margin, rotation, direcao, estrategia,
           beamWidth: beamW,
@@ -1258,7 +1269,6 @@ function _run(pieces, sheetDescriptors, opts) {
           freeRects: grpFreeRects,
           voidRects: grpVoidRects
         });
-        if (remaining.length > 0) console.timeEnd('[maxrects:trace] beamNest');
 
         if (beamResult.placed.length === 0) break;
 
@@ -1509,7 +1519,6 @@ function _run(pieces, sheetDescriptors, opts) {
     stats.retalhosAproveitaveis = allSheets.reduce((s, sh) => s + (sh.retalhos || []).length, 0);
   }
 
-  console.log('[maxrects:trace] _run fim — placed=' + totalPiecesPlaced + ' unplaced=' + totalUnplaced + ' sheets=' + allSheets.length);
   return { sheets: allSheets, stats, unplaced: totalUnplaced };
 }
 
@@ -1616,21 +1625,33 @@ function _calcScrap(pieces, sheetW, sheetH, minDim, margin) {
  */
 function _scoreLayout(bin, remaining, rotation) {
   const fr = bin.freeRects;
-  const pl = bin.placed;
   if (fr.length === 0) return 0;
 
-  // Bbox compactness
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const p of pl) {
-    if (p.x < minX) minX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.x + p.width > maxX) maxX = p.x + p.width;
-    if (p.y + p.height > maxY) maxY = p.y + p.height;
+  // Look-ahead limitado: varrer TODAS as peças restantes é O(n) por candidato
+  // → O(n²) no beam com muitas peças (ex: 1000 peças ≈ 77s). As peças chegam
+  // ordenadas (maiores/mais restritivas primeiro); as M maiores + a menor
+  // cobrem o essencial do look-ahead sem o custo quadrático.
+  const MAX_LOOKAHEAD = 20;
+  let lookahead = remaining;
+  if (remaining.length > MAX_LOOKAHEAD) {
+    lookahead = remaining.slice(0, MAX_LOOKAHEAD - 1);
+    lookahead.push(remaining[remaining.length - 1]);
   }
-  const bboxW = Math.max(1, maxX - minX);
-  const bboxH = Math.max(1, maxY - minY);
+  // Dedup por dimensão: peças idênticas produzem o mesmo fit (max sobre
+  // valores iguais = mesmo valor) — evita avaliar 20 peças repetidas.
+  const seen = new Set();
+  const uniq = [];
+  for (const p of lookahead) {
+    const key = Math.min(p.w, p.h) + 'x' + Math.max(p.w, p.h);
+    if (!seen.has(key)) { seen.add(key); uniq.push(p); }
+  }
+  lookahead = uniq;
+
+  // Bbox compactness — campos incrementais mantidos pelo insert/clone (loop O(placed) era redundante)
+  const bboxW = Math.max(1, bin._bboxMaxX - bin._bboxMinX);
+  const bboxH = Math.max(1, bin._bboxMaxY - bin._bboxMinY);
   const bboxArea = bboxW * bboxH;
-  const placedArea = pl.reduce((s, p) => s + p.width * p.height, 0);
+  const placedArea = bin._placedArea;
   const compactness = bboxArea > 0 ? placedArea / bboxArea : 0;
 
   // Maior free rect (BRS)
@@ -1639,25 +1660,31 @@ function _scoreLayout(bin, remaining, rotation) {
   // Pontua cada free rect pela compatibilidade com peças restantes
   let fitScore = 0;
   const margin = bin.margin || 0;
+  // Menor peça do look-ahead: free rect que não a comporta tem bestFit=0
+  // garantido — skip do loop O(lookahead).
+  let minW = 0;
+  for (const p of lookahead) {
+    const d = Math.min(p.w, p.h) + margin;
+    if (minW === 0 || d < minW) minW = d;
+  }
 
   for (const rect of fr) {
-    if (remaining.length === 0) break;
+    if (lookahead.length === 0) break;
+    if (rect.w < minW || rect.h < minW) continue;
 
     // Encontra a peça restante que MELHOR se encaixa neste retalho
     let bestFit = 0;
-    for (const p of remaining) {
+    const rectAsp = Math.min(rect.w, rect.h) / Math.max(rect.w, rect.h);
+    const rectArea = rect.w * rect.h;
+    for (const p of lookahead) {
       const rw = p.w + margin;
       const rh = p.h + margin;
-      // Testa as duas orientações
-      const fits = [];
-      if (rw <= rect.w && rh <= rect.h) fits.push({ fw: rw, fh: rh, rot: false });
-      if (rotation && rh <= rect.w && rw <= rect.h) fits.push({ fw: rh, fh: rw, rot: true });
-      for (const f of fits) {
+      // A/B (rotação) têm o MESMO score — só muda o teste de caber
+      if ((rw <= rect.w && rh <= rect.h) || (rotation && rh <= rect.w && rw <= rect.h)) {
         // Fit ratio: quanto do retalho a peça preenche
-        const areaFit = (f.fw * f.fh) / (rect.w * rect.h);
+        const areaFit = (rw * rh) / rectArea;
         // Aspect fit: quão compatível é o formato
-        const rectAsp = Math.min(rect.w, rect.h) / Math.max(rect.w, rect.h);
-        const pieceAsp = Math.min(f.fw, f.fh) / Math.max(f.fw, f.fh);
+        const pieceAsp = Math.min(rw, rh) / Math.max(rw, rh);
         const aspMatch = 1 - Math.abs(rectAsp - pieceAsp);
         // Score combinado: 70% area fit, 30% aspect match
         const score = areaFit * 0.7 + aspMatch * 0.3;
@@ -1680,29 +1707,11 @@ function _scoreLayout(bin, remaining, rotation) {
 
   // Skip zonas quando zonaPct <= 1 (estratégias direcionais puras)
   if (zonaPct > 1) {
-    const numZones = Math.max(1, Math.min(99, Math.round(zonaPct)));
-    // zoneW inteiro — evita loop infinito por floating point
-    // (ex: 6000/9 = 666.666... → px nunca alcança pxEnd)
-    const zoneW = Math.max(1, Math.floor(bin.binW / numZones));
-    const zoneArea = bin.binH * zoneW;
-
-    // Calcula área preenchida por zona
-    const zoneFill = new Array(numZones).fill(0);
-    for (const p of pl) {
-      const z = Math.min(numZones - 1, Math.floor(p.x / zoneW));
-      // Uma peça pode ocupar múltiplas zonas — distribui proporcionalmente
-      const pxEnd = p.x + p.width;
-      let px = p.x;
-      while (px < pxEnd) {
-        const zz = Math.min(numZones - 1, Math.floor(px / zoneW));
-        const zzEnd = Math.min((zz + 1) * zoneW, pxEnd);
-        const slice = (zzEnd - px) / p.width; // fração desta peça nesta zona
-        zoneFill[zz] += p.width * p.height * slice;
-        // cp: guard contra loop infinito quando px atinge boundary da última zona
-        if (zzEnd <= px) break;
-        px = zzEnd;
-      }
-    }
+    // Campos incrementais mantidos pelo insert/clone (loops O(placed) eram redundantes)
+    const numZones = bin._zoneNum;
+    const zoneW = bin._zoneW;
+    const zoneArea = bin._zoneArea;
+    const zoneFill = bin._zoneFill;
 
     // Encontra a "fronteira" — primeira zona da esquerda com <threshold%
     const zThreshold = bin._strategy?.zoneThreshold ?? 0.8;
@@ -1717,14 +1726,11 @@ function _scoreLayout(bin, remaining, rotation) {
     // Se todas ≥80%, não há penalidade
     if (frontier < 0) frontier = numZones - 1;
 
-    // Penaliza peças além da fronteira
+    // Penaliza peças além da fronteira (área por zona de origem — incremental)
     let zonePenalty = 0;
-    for (const p of pl) {
-      const z = Math.min(numZones - 1, Math.floor(p.x / zoneW));
-      if (z > frontier) {
-        const dist = (z - frontier) / Math.max(1, numZones - frontier);
-        zonePenalty += dist * (p.width * p.height) / Math.max(1, placedArea);
-      }
+    for (let z = frontier + 1; z < numZones; z++) {
+      const dist = (z - frontier) / Math.max(1, numZones - frontier);
+      zonePenalty += dist * bin._zoneOrigin[z] / Math.max(1, placedArea);
     }
     // zonePenalty: 0 (perfeito) a ~1 (tudo além da fronteira)
     const zPenalty = bin._strategy?.zonePenalty ?? 0.5;
@@ -1767,6 +1773,15 @@ function _scoreLayout(bin, remaining, rotation) {
 function _beamInsert(beam, piece, remaining, K, rotation) {
   const candidates = [];
 
+  // Menor peça restante: free rect menor que ela (nas duas dimensões)
+  // nunca acomoda peça futura — descarta no split/clip para manter fr baixo.
+  let minW = 0;
+  for (const p of remaining) {
+    const d = Math.min(p.w, p.h);
+    if (minW === 0 || d < minW) minW = d;
+  }
+  minW += beam.length ? beam[0].bin.margin : 0;
+
   for (const entry of beam) {
     const bin = entry.bin;
     const mw = piece.w + bin.margin;
@@ -1781,8 +1796,8 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
       if (mw <= fr.w && mh <= fr.h) {
         opts.push({ px: fr.x, py: fr.y, pw: mw, ph: mh, rotated: false });
       }
-      // Orientation B (rotated)
-      if (rotation && mh <= fr.w && mw <= fr.h) {
+      // Orientation B (rotated) — peça quadrada: B é idêntica a A, skip (2x cands)
+      if (rotation && mw !== mh && mh <= fr.w && mw <= fr.h) {
         opts.push({ px: fr.x, py: fr.y, pw: mh, ph: mw, rotated: true });
       }
 
@@ -1802,7 +1817,23 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
         };
         clone.placed.push(placedRect);
         clone._placedArea += placedRect.width * placedRect.height;
-        clone._splitRect(i, opt.px, opt.py, opt.pw, opt.ph);
+        // Zoneamento incremental (mesma aritmética dos loops do _scoreLayout)
+        if (clone._zoneNum > 1) {
+          const zN = clone._zoneNum, zW = clone._zoneW;
+          const z0 = Math.min(zN - 1, Math.floor(opt.px / zW));
+          clone._zoneOrigin[z0] += placedRect.width * placedRect.height;
+          const pxEnd = opt.px + opt.pw;
+          let px = opt.px;
+          while (px < pxEnd) {
+            const zz = Math.min(zN - 1, Math.floor(px / zW));
+            const zzEnd = Math.min((zz + 1) * zW, pxEnd);
+            clone._zoneFill[zz] += (zzEnd - px) / opt.pw * placedRect.width * placedRect.height;
+            // cp: guard contra loop infinito no boundary da última zona
+            if (zzEnd <= px) break;
+            px = zzEnd;
+          }
+        }
+        clone._splitRect(i, opt.px, opt.py, opt.pw, opt.ph, true, minW);
 
         // ── Clip free rects that overlap the newly placed piece ──
         // (mesmo clip do insert() — Beam Search pulava esta etapa)
@@ -1826,7 +1857,7 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
           }
           clone.freeRects.splice(fi, 1);
           for (const c of clipped) {
-            if (c.w > 0 && c.h > 0) clone.freeRects.push(c);
+            if (c.w > 0 && c.h > 0 && c.w >= minW && c.h >= minW) clone.freeRects.push(c);
           }
         }
 
@@ -1847,7 +1878,17 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
 
   // Ordena decrescente e mantém top-K
   candidates.sort((a, b) => b.score - a.score);
-  return candidates.slice(0, K);
+  const top = candidates.slice(0, K);
+  // Merge/prune uma vez nos vencedores (freeRects do candidato ficaram
+  // fragmentados pelo split sem maintain — limpa antes do próximo passo).
+  // Merge é O(fr² × placed): vale quando fr é pequeno (retalhos grandes
+  // fundíveis); fr alto = fragmentos irregulares, quase nenhum merge
+  // sobrevive ao overlap check → só prune (O(fr²), sem o termo placed).
+  for (const e of top) {
+    if (e.bin.freeRects.length <= 20) e.bin._mergeFreeRects();
+    e.bin._prune();
+  }
+  return top;
 }
 
 /**
