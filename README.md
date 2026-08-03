@@ -292,3 +292,13 @@ Each `estrategia` (0/1/2) has a built-in config. Every field can be overridden v
 | Gap tolerance | `1` mm | Retalho gap detection |
 | Precision | `0.1` mm | Retalho coordinate rounding |
 | Espessura tolerance | `0.01` mm | Material filter matching
+
+## Publicação (npm)
+
+Pacote público e gratuito (MIT). Publicar nova versão:
+
+1. Bump da versão em `package.json` — versões são **imutáveis** no npm, nunca republicar a mesma versão
+2. `npm publish` (login + 2FA)
+3. Conferir: `npm view maxrects-steel-supreme version`
+
+Consumido pelo produto CorteMES via `npm update maxrects-steel-supreme` no piloto + build da imagem docker.
