@@ -1699,6 +1699,10 @@ function _calcScrap(pieces, sheetW, sheetH, minDim, margin) {
  *   4. Bbox compactness: densidade do bbox
  *
  * Retorna score normalizado (0..1).
+ *
+ * NOTA (M7): o score é calculado ANTES do _compactLayout — o sheet relatado
+ * é pós-compactação, o score foi pré. Impacto no nº de chapas é pequeno;
+ * mantido assim para não custar O(placed) extra por candidato no beam.
  */
 function _scoreLayout(bin, remaining, rotation) {
   const fr = bin.freeRects;
