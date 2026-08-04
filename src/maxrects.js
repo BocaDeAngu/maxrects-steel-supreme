@@ -105,7 +105,11 @@ function _strategyConfig(estrategia) {
         sortComparator: (a, b) => (b.w * b.h) - (a.w * a.h),
         lookAhead: 0,
         splitBias: 38,
-        zonaPct: 17,
+        // cp: zonaPct=0 (default) — zoneamento desligado; o beam otimiza
+        // compactness (bbox mínimo), empilhando em Y e deixando a sobra
+        // como retângulo que conserva o comprimento (X) total.
+        // zonaPct>0 liga o fator de comprimento (X-waste).
+        zonaPct: 0,
         beamWidth: 35,
         tiers: {
           tier2: { weight: 4.76, mode: 'baf' },
@@ -186,8 +190,11 @@ class MaxRectsBin {
       if (opts.lookAheadOverride !== undefined) {
         this._strategy.lookAhead = opts.lookAheadOverride;
       }
-      // zonaPct da estratégia, com override externo se explícito
-      this._strategy.zonaPct = opts.zonaPct !== undefined ? opts.zonaPct : (cfg.zonaPct || 80);
+      // zonaPct: 0 = desligado, >0 = ligado (fator de comprimento).
+      // null/NaN (ex: coluna zona_pct NULL no banco, convertida em 0 pelo
+      // wrapper) = não configurado → usa o default da estratégia (0).
+      const zp = opts.zonaPct != null && !isNaN(opts.zonaPct) ? Number(opts.zonaPct) : (cfg.zonaPct ?? 0);
+      this._strategy.zonaPct = zp;
       // scoreLayoutWeights, com override externo se explícito
       if (opts.scoreLayoutWeights) {
         this._strategy.scoreLayoutWeights = opts.scoreLayoutWeights;
@@ -209,15 +216,6 @@ class MaxRectsBin {
       this._strategy = null;
     }
 
-    // Pré-computa zoneamento — _scoreLayout usa campos incrementais
-    // (recalcular por candidato era O(placed) no beam)
-    const zp0 = this._strategy ? (this._strategy.zonaPct || 80) : 80;
-    this._zoneNum = Math.max(1, Math.min(99, Math.round(zp0)));
-    this._zoneW = Math.max(1, Math.floor(this.binW / this._zoneNum));
-    this._zoneArea = this.binH * this._zoneW;
-    this._zoneFill = new Array(this._zoneNum).fill(0);   // área por zona (span proporcional)
-    this._zoneOrigin = new Array(this._zoneNum).fill(0); // área por zona (origem da peça)
-
     this._lastPx = -1;
     this._lastPy = -1;
     this._bboxMinX = Infinity;
@@ -225,6 +223,9 @@ class MaxRectsBin {
     this._bboxMaxX = -Infinity;
     this._bboxMaxY = -Infinity;
     this._placedArea = 0;     // soma das áreas das peças colocadas (para density scoring)
+    this._zonaX = null;       // linha virtual da zona (borda direita da coluna atual)
+    this._zonaColMaxY = 0;    // maior Y ocupado na coluna atual (espaço vertical restante)
+    this._zonaFactor = 1;     // fator de penalidade de ultrapassagem (1 = sem punição)
     this._alignAxis = null;   // 'x' (horizontal row) or 'y' (vertical column)
     this._alignW = 0;         // piece width  that triggered alignment
     this._alignH = 0;         // piece height that triggered alignment
@@ -248,6 +249,9 @@ class MaxRectsBin {
     // (nunca muta objeto); o merge dos vencedores copia antes de mutar (copy-on-write).
     c.placed = this.placed.slice();
     c._placedArea = this._placedArea;
+    c._zonaX = this._zonaX;
+    c._zonaColMaxY = this._zonaColMaxY;
+    c._zonaFactor = this._zonaFactor;
     c._bboxMinX = this._bboxMinX;
     c._bboxMinY = this._bboxMinY;
     c._bboxMaxX = this._bboxMaxX;
@@ -259,11 +263,6 @@ class MaxRectsBin {
     c._alignH = this._alignH;
     c._alignAnchorPos = this._alignAnchorPos;
     c._strategy = this._strategy; // read-only após o constructor — clone JSON era desperdício
-    c._zoneNum = this._zoneNum;
-    c._zoneW = this._zoneW;
-    c._zoneArea = this._zoneArea;
-    c._zoneFill = this._zoneFill.slice();
-    c._zoneOrigin = this._zoneOrigin.slice();
     c.voidRects = this.voidRects.slice();
     c.sheetRects = this.sheetRects.slice();
     return c;
@@ -1548,22 +1547,8 @@ function _calcScrap(pieces, sheetW, sheetH, minDim, margin) {
   ySet.add(sheetH); // faixa final — espaço livre acima da última peça
   const yPoints = [...ySet].sort((a, b) => a - b);
 
-  const retalhos = [];
-
-  function addGap(x, y, gapW, stripH) {
-    const utilW = gapW - margin;
-    const utilH = stripH - margin;
-    if (utilW >= minDim && utilH >= minDim) {
-      retalhos.push({
-        x: Math.round(x * 10) / 10,
-        y: Math.round(y * 10) / 10,
-        width: Math.round(gapW * 10) / 10,
-        height: Math.round(stripH * 10) / 10,
-        area: Math.round(gapW * stripH * 100) / 100
-      });
-    }
-  }
-
+  // Gaps por faixa horizontal (sem filtro de minDim — aplicado após merge)
+  const strips = [];
   for (let yi = 0; yi < yPoints.length - 1; yi++) {
     const y0 = yPoints[yi];
     const y1 = yPoints[yi + 1];
@@ -1575,17 +1560,55 @@ function _calcScrap(pieces, sheetW, sheetH, minDim, margin) {
       .filter(o => o.y < y1 && o.y + o.h > y0)
       .sort((a, b) => a.x - b.x);
 
+    const gaps = [];
     let cursorX = 0;
     for (const o of occ) {
-      if (o.x > cursorX + 1) {
-        addGap(cursorX, y0, o.x - cursorX, stripH);
-      }
+      if (o.x > cursorX + 1) gaps.push({ x0: cursorX, x1: o.x });
       if (o.x + o.w > cursorX) cursorX = o.x + o.w;
     }
-
     // Gap at right edge
-    if (sheetW > cursorX + 1) {
-      addGap(cursorX, y0, sheetW - cursorX, stripH);
+    if (sheetW > cursorX + 1) gaps.push({ x0: cursorX, x1: sheetW });
+
+    strips.push({ y0, y1, gaps });
+  }
+
+  // Merge vertical: gaps com range X COBERTO por faixas contíguas formam
+  // um retalho único. Antes, a sobra contígua à direita de colunas de
+  // peças (ex: 480×1970) era fragmentada pelas faixas de 10mm entre
+  // linhas (gap de largura total) e pelas linhas parciais — a sobra
+  // aproveitável sumia do relatório.
+  const ativos = []; // { x0, x1, y0, y1 }
+  for (const s of strips) {
+    for (const g of s.gaps) {
+      // 1) Estende TODOS os ativos contíguos cobertos pelo gap (find com 1
+      // resultado roubava a extensão: o gap de 10mm entre colunas crescia
+      // e impedia o gap à direita de atravessar as faixas entre linhas).
+      for (const a of ativos) {
+        if (a.y1 === s.y0 && g.x0 <= a.x0 && g.x1 >= a.x1) a.y1 = s.y1;
+      }
+      // 2) Também cria/estende um ativo com o range EXATO do gap — sem isso,
+      // a sobra de largura total abaixo de um bloco (ex: 1190×790) era
+      // consumida estendendo os gaps estreitos entre colunas e sumia.
+      const exato = ativos.find(a => a.x0 === g.x0 && a.x1 === g.x1 && a.y1 === s.y0);
+      if (exato) exato.y1 = s.y1;
+      else ativos.push({ x0: g.x0, x1: g.x1, y0: s.y0, y1: s.y1 });
+    }
+  }
+
+  const retalhos = [];
+  for (const a of ativos) {
+    const gapW = a.x1 - a.x0;
+    const stripH = a.y1 - a.y0;
+    const utilW = gapW - margin;
+    const utilH = stripH - margin;
+    if (utilW >= minDim && utilH >= minDim) {
+      retalhos.push({
+        x: Math.round(a.x0 * 10) / 10,
+        y: Math.round(a.y0 * 10) / 10,
+        width: Math.round(gapW * 10) / 10,
+        height: Math.round(stripH * 10) / 10,
+        area: Math.round(gapW * stripH * 100) / 100
+      });
     }
   }
 
@@ -1602,6 +1625,22 @@ function _calcScrap(pieces, sheetW, sheetH, minDim, margin) {
         i--;
       }
     }
+  }
+
+  // Remove sobreposição: gaps paralelos formam retalhos alternativos que se
+  // sobrepõem (ex: sobra à direita de colunas com linha parcial). Mantém o
+  // maior por área — a soma dos retalhos não pode exceder a sobra real.
+  if (retalhos.length > 1) {
+    retalhos.sort((a, b) => b.area - a.area);
+    const mantidos = [];
+    for (const r of retalhos) {
+      const sobrepoe = mantidos.some(m =>
+        r.x < m.x + m.width && r.x + r.width > m.x &&
+        r.y < m.y + m.height && r.y + r.height > m.y);
+      if (!sobrepoe) mantidos.push(r);
+    }
+    retalhos.length = 0;
+    retalhos.push(...mantidos);
   }
 
   return retalhos;
@@ -1697,54 +1736,17 @@ function _scoreLayout(bin, remaining, rotation) {
   // Normaliza fitScore pelo número de free rects
   const avgFit = fr.length > 0 ? fitScore / fr.length : 0;
 
-  // ── Zonas de trabalho (anti-espalhamento horizontal) ─────
-  // Divide a chapa em N zonas ao longo do comprimento (X).
-  // zonaPct (1-99): 1 = chapa toda (livre), 99 = máx. zoneamento.
-  // Se zona anterior não está >80% cheia, peças em zonas
-  // posteriores são penalizadas. Força preenchimento vertical
-  // antes de espalhar horizontalmente.
-  const zonaPct = bin._strategy?.zonaPct || 80; // default pós backtest
+  // ── Zona (zonaPct > 0) ───────────────────────────────────
+  // Fator de penalidade da linha virtual, calculado no _beamInsert quando
+  // a peça ultrapassa a linha com peças cabíveis restantes e Y livre na
+  // coluna. 0 = desligado (padrão Supreme) — beam otimiza compactness.
+  const zonaPct = bin._strategy?.zonaPct ?? 0; // 0 = desligado
 
-  // Skip zonas quando zonaPct <= 1 (estratégias direcionais puras)
-  if (zonaPct > 1) {
-    // Campos incrementais mantidos pelo insert/clone (loops O(placed) eram redundantes)
-    const numZones = bin._zoneNum;
-    const zoneW = bin._zoneW;
-    const zoneArea = bin._zoneArea;
-    const zoneFill = bin._zoneFill;
-
-    // Encontra a "fronteira" — primeira zona da esquerda com <threshold%
-    const zThreshold = bin._strategy?.zoneThreshold ?? 0.8;
-    let frontier = -1;
-    for (let z = 0; z < numZones; z++) {
-      const ratio = zoneArea > 0 ? zoneFill[z] / zoneArea : 0;
-      if (ratio < zThreshold) {
-        frontier = z;
-        break;
-      }
-    }
-    // Se todas ≥80%, não há penalidade
-    if (frontier < 0) frontier = numZones - 1;
-
-    // Penaliza peças além da fronteira (área por zona de origem — incremental)
-    let zonePenalty = 0;
-    for (let z = frontier + 1; z < numZones; z++) {
-      const dist = (z - frontier) / Math.max(1, numZones - frontier);
-      zonePenalty += dist * bin._zoneOrigin[z] / Math.max(1, placedArea);
-    }
-    // zonePenalty: 0 (perfeito) a ~1 (tudo além da fronteira)
-    const zPenalty = bin._strategy?.zonePenalty ?? 0.5;
-    let zoneFactor = Math.max(0, 1 - zonePenalty * zPenalty);
-
-    // ── Span penalty: penaliza nº de zonas ocupadas ────────
-    // Se o layout ocupa >50% da largura da chapa, sofre penalidade adicional.
-    // Força distribuições mais compactas horizontalmente.
-    const zSpanW = bin._strategy?.zoneSpanWeight ?? 0;
-    if (zSpanW > 0 && numZones > 1) {
-      const spanRatio = (frontier + 1) / numZones;
-      const spanPenalty = Math.max(0, spanRatio - 0.5) * zSpanW;
-      zoneFactor *= Math.max(0, 1 - spanPenalty);
-    }
+  // Skip quando zonaPct <= 0 (desligado)
+  if (zonaPct > 0) {
+    // Fator da linha virtual (0.3..1): 1 = sem punição (dentro da coluna,
+    // coluna cheia, ou sem peça restante que caiba); <1 = ultrapassou.
+    let zoneFactor = bin._zonaFactor ?? 1;
 
     // Score final: combina compactness, fit, BRS e zone factor
     const brsNorm = Math.min(1, largestFree / (bin.binW * bin.binH));
@@ -1817,22 +1819,6 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
         };
         clone.placed.push(placedRect);
         clone._placedArea += placedRect.width * placedRect.height;
-        // Zoneamento incremental (mesma aritmética dos loops do _scoreLayout)
-        if (clone._zoneNum > 1) {
-          const zN = clone._zoneNum, zW = clone._zoneW;
-          const z0 = Math.min(zN - 1, Math.floor(opt.px / zW));
-          clone._zoneOrigin[z0] += placedRect.width * placedRect.height;
-          const pxEnd = opt.px + opt.pw;
-          let px = opt.px;
-          while (px < pxEnd) {
-            const zz = Math.min(zN - 1, Math.floor(px / zW));
-            const zzEnd = Math.min((zz + 1) * zW, pxEnd);
-            clone._zoneFill[zz] += (zzEnd - px) / opt.pw * placedRect.width * placedRect.height;
-            // cp: guard contra loop infinito no boundary da última zona
-            if (zzEnd <= px) break;
-            px = zzEnd;
-          }
-        }
         clone._splitRect(i, opt.px, opt.py, opt.pw, opt.ph, true, minW);
 
         // ── Clip free rects that overlap the newly placed piece ──
@@ -1869,6 +1855,38 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
         const bb = opt.py + opt.ph;
         if (br > clone._bboxMaxX) clone._bboxMaxX = br;
         if (bb > clone._bboxMaxY) clone._bboxMaxY = bb;
+
+        // ── Zona (linha virtual) — zonaPct>0 ──────────────────────────
+        // A primeira peça de cada coluna define a linha virtual na borda
+        // direita. Enquanto existe peça restante que caiba na largura da
+        // coluna, peças que ULTRAPASSAM a linha são penalizadas
+        // (proporcional ao Y livre da coluna e ao quanto ultrapassa).
+        // Coluna cheia em Y ou sem peça restante que caiba → linha some,
+        // X liberado (fator 1).
+        const zonaPct = clone._strategy?.zonaPct ?? 0;
+        clone._zonaFactor = 1;
+        if (zonaPct > 0) {
+          const zX = clone._zonaX;
+          if (zX === null || zX === undefined) {
+            clone._zonaX = br;          // primeira peça cria a linha
+            clone._zonaColMaxY = bb;
+          } else if (br <= zX) {
+            // dentro da coluna atual — empilha em Y
+            if (bb > clone._zonaColMaxY) clone._zonaColMaxY = bb;
+          } else {
+            // ultrapassa a linha — só é punido se ainda há peça que caiba
+            const cabeAlguma = remaining.some(p => Math.min(p.w, p.h) <= zX);
+            if (cabeAlguma) {
+              const yFree = Math.max(0, Math.min(1, (clone.binH - clone._zonaColMaxY) / clone.binH));
+              const ultrapRatio = Math.min(1, (br - zX) / Math.max(1, zX));
+              const penaBase = 0.35 + 0.65 * ultrapRatio;
+              clone._zonaFactor = Math.max(0.3, 1 - yFree * penaBase);
+            }
+            // a peça inicia nova coluna → a linha avança
+            clone._zonaX = br;
+            clone._zonaColMaxY = bb;
+          }
+        }
 
         const score = _scoreLayout(clone, remaining, rotation);
         candidates.push({ bin: clone, score });
