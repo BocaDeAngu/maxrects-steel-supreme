@@ -20,6 +20,14 @@
 //  Strategy configuration
 // ═══════════════════════════════════════════════════════════
 
+// Comparadores de ordem canônicos — usados pelo sortMode (opts), pela
+// estratégia e pela variação de ordem por chapa (Fase 2.1).
+const SORT_FNS = {
+  'area-desc': (a, b) => (b.w * b.h) - (a.w * a.h),
+  'width-desc': (a, b) => b.w - a.w || (b.w * b.h) - (a.w * a.h),
+  'height-desc': (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h)
+};
+
 /**
  * Maps estrategia (0|1|2) to a full algorithm configuration:
  *   direcao, sort order, lookAhead, split bias, and per-tier weights.
@@ -176,13 +184,8 @@ class MaxRectsBin {
         this._strategy.tiers = opts.tiers;
       }
       if (opts.sortMode) {
-        const sortFns = {
-          'area-desc': (a, b) => (b.w * b.h) - (a.w * a.h),
-          'width-desc': (a, b) => b.w - a.w || (b.w * b.h) - (a.w * a.h),
-          'height-desc': (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h)
-        };
-        if (sortFns[opts.sortMode]) {
-          this._strategy.sortComparator = sortFns[opts.sortMode];
+        if (SORT_FNS[opts.sortMode]) {
+          this._strategy.sortComparator = SORT_FNS[opts.sortMode];
         }
       }
       if (opts.splitBias !== undefined) {
@@ -1082,13 +1085,8 @@ function _run(pieces, sheetDescriptors, opts) {
     strategyCfg.tiers = opts.tiers;
   }
   if (strategyCfg && opts.sortMode) {
-    const sortFns = {
-      'area-desc': (a, b) => (b.w * b.h) - (a.w * a.h),
-      'width-desc': (a, b) => b.w - a.w || (b.w * b.h) - (a.w * a.h),
-      'height-desc': (a, b) => b.h - a.h || (b.w * b.h) - (a.w * a.h)
-    };
-    if (sortFns[opts.sortMode]) {
-      strategyCfg.sortComparator = sortFns[opts.sortMode];
+    if (SORT_FNS[opts.sortMode]) {
+      strategyCfg.sortComparator = SORT_FNS[opts.sortMode];
     }
   }
   if (strategyCfg && opts.splitBias !== undefined) {
@@ -1252,7 +1250,7 @@ function _run(pieces, sheetDescriptors, opts) {
         ? opts.beamWidth
         : (strategyCfg?.beamWidth || 0);
       if (beamW > 0) {
-        const beamResult = _beamNest(remaining, effW, effH, {
+        const beamOpts = {
           margin, rotation, direcao, estrategia,
           beamWidth: beamW,
           tiers: opts.tiers,
@@ -1268,7 +1266,46 @@ function _run(pieces, sheetDescriptors, opts) {
           // NOVO: polígono
           freeRects: grpFreeRects,
           voidRects: grpVoidRects
-        });
+        };
+
+        // ── Fase 2.1: variação de ordem por chapa (M5) ──────
+        // O score do beam não decide QUANTAS peças entram na chapa —
+        // decide o arranjo. Quem decide é a ORDEM das peças. Testa as
+        // 3 ordens canônicas com K reduzido e usa a de menor leftover
+        // (length, desempate por área total) para o nest definitivo.
+        // Custo ~3×K_probe por chapa.
+        let ordemFinal = 'area-desc';
+        if (remaining.length > 1) {
+          // Ordens colapsam quando a altura (ou largura) é uniforme:
+          // width-desc ≡ area-desc ≡ height-desc (desempate por área).
+          // Pular o probe evita 3× o mesmo trabalho (ex: proj 37 esp2.25,
+          // 663 peças todas de altura 292).
+          let hUniforme = true, wUniforme = true;
+          const h0 = remaining[0].h, w0 = remaining[0].w;
+          for (const p of remaining) {
+            if (p.h !== h0) hUniforme = false;
+            if (p.w !== w0) wUniforme = false;
+            if (!hUniforme && !wUniforme) break;
+          }
+          if (!hUniforme && !wUniforme) {
+            const PROBE_K = 10;
+            let melhorLeftover = Infinity;
+            let melhorArea = Infinity;
+            for (const nome of Object.keys(SORT_FNS)) {
+              const ordenada = [...remaining].sort(SORT_FNS[nome]);
+              const probe = _beamNest(ordenada, effW, effH, { ...beamOpts, beamWidth: PROBE_K });
+              const areaLeft = probe.stillRemaining.reduce((s, p) => s + p.w * p.h, 0);
+              if (probe.stillRemaining.length < melhorLeftover ||
+                  (probe.stillRemaining.length === melhorLeftover && areaLeft < melhorArea)) {
+                melhorLeftover = probe.stillRemaining.length;
+                melhorArea = areaLeft;
+                ordemFinal = nome;
+              }
+            }
+          }
+        }
+
+        const beamResult = _beamNest([...remaining].sort(SORT_FNS[ordemFinal]), effW, effH, beamOpts);
 
         if (beamResult.placed.length === 0) break;
 
