@@ -105,10 +105,11 @@ function _strategyConfig(estrategia) {
         sortComparator: (a, b) => (b.w * b.h) - (a.w * a.h),
         lookAhead: 0,
         splitBias: 38,
-        // cp: zonaPct=0 (default) — zoneamento desligado; o beam otimiza
-        // compactness (bbox mínimo), empilhando em Y e deixando a sobra
-        // como retângulo que conserva o comprimento (X) total.
-        // zonaPct>0 liga o fator de comprimento (X-waste).
+        // zonaPct=0 (DEFAULT DA BIBLIOTECA): zoneamento desligado.
+        // Opt-in: quem usa o pacote decide ligar passando zonaPct:1
+        // (ex: o piloto configura 1). A linha virtual penaliza peça que
+        // ultrapassa a coluna em X enquanto há peça que cabe na coluna e
+        // Y livre — força empilhar em Y em vez de estender só no X.
         zonaPct: 0,
         beamWidth: 35,
         tiers: {
@@ -1070,7 +1071,7 @@ function _run(pieces, sheetDescriptors, opts) {
   const velocidadeCorte = parseFloat(opts.velocidadeCorte) || 0;
   const minDimensaoRetalho = Math.max(0, parseInt(opts.minDimensaoRetalho, 10) || 0);
   const direcao = ['vertical', 'horizontal'].includes(opts.direcao) ? opts.direcao : '';
-  const estrategia = [0, 1, 2].includes(opts.estrategia) ? opts.estrategia : -1;
+  const estrategia = [0, 1, 2].includes(Number(opts.estrategia)) ? Number(opts.estrategia) : -1;
 
   // When estrategia is set (0-2), load its config and override direcao
   const strategyCfg = estrategia >= 0 ? _strategyConfig(estrategia) : null;
@@ -1879,8 +1880,10 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
             if (cabeAlguma) {
               const yFree = Math.max(0, Math.min(1, (clone.binH - clone._zonaColMaxY) / clone.binH));
               const ultrapRatio = Math.min(1, (br - zX) / Math.max(1, zX));
-              const penaBase = 0.35 + 0.65 * ultrapRatio;
-              clone._zonaFactor = Math.max(0.3, 1 - yFree * penaBase);
+              // Penalidade reforçada: cruzar a linha da coluna com Y livre
+              // empilha em Y em vez de espalhar no X (default era 0.35/0.65/0.3).
+              const penaBase = 0.6 + 0.8 * ultrapRatio;
+              clone._zonaFactor = Math.max(0.1, 1 - yFree * penaBase);
             }
             // a peça inicia nova coluna → a linha avança
             clone._zonaX = br;
