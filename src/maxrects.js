@@ -29,7 +29,7 @@ const SORT_FNS = {
 };
 
 /**
- * Maps estrategia (0|1|2) to a full algorithm configuration:
+ * Maps estrategia (0|1|2|3) to a full algorithm configuration:
  *   direcao, sort order, lookAhead, split bias, and per-tier weights.
  *
  * Each tier has a `weight` multiplier and optional `mode` string.
@@ -42,7 +42,7 @@ const SORT_FNS = {
  *   Tier 5 — squareness bonus (prefer splits leaving near-square rects)
  *   Tiebreaker — direcao-based position preference
  *
- * @param {number} estrategia — 0=Vertical, 1=Horizontal, 2=Supreme
+ * @param {number} estrategia — 0=Vertical, 1=Horizontal, 2=Supreme, 3=Guilhotina
  * @returns {object} config
  */
 const DEFAULT_TIERS = {
@@ -55,7 +55,7 @@ const DEFAULT_TIERS = {
 };
 
 function _strategyConfig(estrategia) {
-  const e = [0, 1, 2].includes(estrategia) ? estrategia : 0;
+  const e = [0, 1, 2, 3].includes(estrategia) ? estrategia : 0;
 
   switch (e) {
     // ═══ Vertical (0) — pure vertical columns ═══
@@ -133,6 +133,30 @@ function _strategyConfig(estrategia) {
         zonePenalty: 5.0,
         zoneSpanWeight: 0.5
       };
+
+    // ═══ Guilhotina (3) — shelf NFDH + h* ═══
+    // Cortável por construção: fileiras edge-to-edge (cortes H entre
+    // fileiras + cortes V dentro de cada fileira). beamWidth=0 → o _run
+    // segue o caminho shelf (nunca beam/greedy). h* (fileiras uniformes)
+    // minimiza os vãos internos (perda).
+    case 3:
+      return {
+        label: 'Guilhotina',
+        direcao: '',
+        sortComparator: (a, b) => b.h - a.h || b.w - a.w, // NFDH clássico (altura desc)
+        lookAhead: 0,
+        splitBias: 50,
+        zonaPct: 0,
+        beamWidth: 0,
+        tiers: {
+          tier2: { weight: 0 },
+          tier3: { weight: 0 },
+          tier4: { weight: 0 },
+          tier5: { weight: 0 },
+          tiebreaker: { weight: 0 }
+        },
+        scoreLayoutWeights: { compactness: 0, avgFit: 0, brsNorm: 0 }
+      };
   }
 }
 
@@ -147,7 +171,7 @@ class MaxRectsBin {
    * @param {object} [opts] - Configuration object
    * @param {number} [opts.margin=0]     - Gap between pieces
    * @param {string} [opts.direcao='']   - 'vertical'|'horizontal'|''
-   * @param {number} [opts.estrategia=0]  - 0=Vertical, 1=Horizontal, 2=Supreme
+   * @param {number} [opts.estrategia=0]  - 0=Vertical, 1=Horizontal, 2=Supreme, 3=Guilhotina
    * @param {object} [opts.tiers]        - Override tiers for the strategy
    * @param {string} [opts.sortMode]     - Override sort mode
    * @param {number} [opts.splitBias]    - Override split bias
@@ -172,7 +196,7 @@ class MaxRectsBin {
     this.placed = [];
 
     // estrategia -1 = backward compat (classic direcao mode, no overrides)
-    const est = [0, 1, 2].includes(opts.estrategia) ? opts.estrategia : -1;
+    const est = [0, 1, 2, 3].includes(opts.estrategia) ? opts.estrategia : -1;
     this.estrategia = est;
     if (est >= 0) {
       const cfg = _strategyConfig(est);
@@ -1049,7 +1073,7 @@ function _calcVoidRects(freeRects, bbW, bbH) {
  * @param {number}  [opts.velocidadeCorte=0] - Cutting constant mm²/min (0 = skip). Formula: perim / (K / esp)
  * @param {number}  [opts.minDimensaoRetalho=0] - Min scrap dimension in mm (0 = skip retalhos). Retalho aproveitável se min(largura, altura) ≥ valor.
  * @param {string}  [opts.direcao='']        - Nesting sense: '' (auto), 'vertical' (prefer width), 'horizontal' (prefer height)
- * @param {number}  [opts.estrategia=-1]     - 0=Vertical (colunas), 1=Horizontal (fileiras), 2=Supreme (BRS+waste+adaptive). Overrides direcao when set (0-2). -1=disabled.
+ * @param {number}  [opts.estrategia=-1]     - 0=Vertical (colunas), 1=Horizontal (fileiras), 2=Supreme (BRS+waste+adaptive), 3=Guilhotina (shelf+h*). Overrides direcao when set (0-3). -1=disabled.
  *
  * @returns {{ sheets: Array, stats: object, unplaced: number }}
  */
@@ -1076,9 +1100,9 @@ function _run(pieces, sheetDescriptors, opts) {
   const velocidadeCorte = parseFloat(opts.velocidadeCorte) || 0;
   const minDimensaoRetalho = Math.max(0, parseInt(opts.minDimensaoRetalho, 10) || 0);
   const direcao = ['vertical', 'horizontal'].includes(opts.direcao) ? opts.direcao : '';
-  const estrategia = [0, 1, 2].includes(Number(opts.estrategia)) ? Number(opts.estrategia) : -1;
+  const estrategia = [0, 1, 2, 3].includes(Number(opts.estrategia)) ? Number(opts.estrategia) : -1;
 
-  // When estrategia is set (0-2), load its config and override direcao
+  // When estrategia is set (0-3), load its config and override direcao
   const strategyCfg = estrategia >= 0 ? _strategyConfig(estrategia) : null;
 
   // External override: opts.tiers substitui os tiers da estratégia
@@ -1246,6 +1270,31 @@ function _run(pieces, sheetDescriptors, opts) {
     while (maxSheets === 0 || groupSheets.length < maxSheets) {
       if (++_loopGuard > 10000) throw new Error('Infinite loop detected in sheet generation');
       if (remaining.length === 0) break;
+
+      // ── Guilhotina (3) — shelf NFDH + h* ─────────────────
+      // Cortável por construção. Caminho próprio (nunca beam/greedy).
+      if (estrategia === 3) {
+        const shelfResult = _shelfNest(remaining, effW, effH, {
+          margin,
+          rotation,
+          hStar: _computeHStar(remaining, effH, margin)
+        });
+
+        if (shelfResult.placed.length === 0) break;
+
+        const usedArea = shelfResult.placed.reduce((s, p) => s + p.area, 0);
+        groupSheets.push({
+          pieces: shelfResult.placed,
+          usedArea,
+          utilization: Math.round((usedArea / sheetArea) * 10000) / 100,
+          sheetWidth: sheetW,
+          sheetHeight: sheetH
+        });
+
+        remaining.length = 0;
+        remaining.push(...shelfResult.stillRemaining);
+        continue;
+      }
 
       // ── Beam Search (quando beamWidth > 0) ────────────────
       const beamW = opts.beamWidth !== undefined && opts.beamWidth !== null
@@ -1559,6 +1608,110 @@ function _run(pieces, sheetDescriptors, opts) {
   }
 
   return { sheets: allSheets, stats, unplaced: totalUnplaced };
+}
+
+// ────────────────────────────────────────────────────────────
+//  Shelf FFDH (Guilhotina) — cortável por construção
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Shelf FFDH (First Fit Decreasing Height) com h* — estratégia 3.
+ *
+ * Cortável por construção: cortes H entre fileiras (edge-to-edge da
+ * chapa) + cortes V dentro de cada fileira (edge-to-edge da fileira,
+ * que já é um retângulo independente após o corte H). A árvore de
+ * cortes SEMPRE existe — não é armazenada (ordem de corte não importa).
+ *
+ * First-fit (não next-fit): cada peça preenche a PRIMEIRA fileira aberta
+ * onde cabe (altura e sobra de X) antes de abrir fileira nova — sem isso,
+ * peças largas (>metade da chapa) deixam ~40% da largura vazia por fileira
+ * (proj 37: 1771×292, 1671×292 → densidade 88% → 77%). Fileiras abertas
+ * só crescem em Y (base = fim da última) — cortes H seguem edge-to-edge.
+ *
+ * Peças lane (adotam h*) são reorientadas para h* no Y — MUTA o objeto
+ * de `sortedPieces`: o h* é estável entre folhas e o stillRemaining
+ * segue orientado para a próxima folha. Peça já deitada (h === hStar)
+ * ou quadrada (w === h === hStar) não muda. Peças sem h* mantêm a
+ * orientação natural e só rotacionam se necessário para caber.
+ *
+ * @returns {{ placed: Array, stillRemaining: Array }} — placed no mesmo
+ *   formato do beam: { x, y, width, height, rotated, label, material,
+ *   espessura_mm, origem_id, area } em coordenadas efetivas (sem borda).
+ */
+function _shelfNest(sortedPieces, sheetW, sheetH, opts) {
+  const margin = Math.max(0, opts.margin || 0);
+  const rotation = opts.rotation === 'fit-only' ? 'fit-only' : opts.rotation !== false;
+  const hStar = opts.hStar || null;
+
+  const pieces = [...sortedPieces];
+  if (hStar) {
+    for (const p of pieces) {
+      if (p.w === hStar && p.h !== hStar) {
+        const tmp = p.w; p.w = p.h; p.h = tmp;
+      }
+    }
+  }
+  // FFDH clássico: altura desc (desempate por largura desc)
+  pieces.sort((a, b) => b.h - a.h || b.w - a.w);
+
+  const placed = [];
+  const stillRemaining = [];
+  const shelves = []; // { y, h, x } — fileiras abertas (first-fit)
+
+  const pushPiece = (piece, x, y, rotated) => {
+    placed.push({
+      x, y,
+      width: rotated ? piece.h : piece.w,
+      height: rotated ? piece.w : piece.h,
+      rotated,
+      label: piece.label || '',
+      material: piece.material || '',
+      espessura_mm: piece.espessura_mm || 0,
+      origem_id: piece.origem_id,
+      area: piece.w * piece.h
+    });
+  };
+
+  const abreFileira = (h) => {
+    const y = shelves.length === 0 ? 0 : shelves[shelves.length - 1].y + shelves[shelves.length - 1].h;
+    if (y + h > sheetH + 1e-9) return -1;
+    shelves.push({ y, h, x: 0 });
+    return shelves.length - 1;
+  };
+
+  for (const piece of pieces) {
+    const lane = hStar && piece.h === hStar;
+    const pw = piece.w + margin, ph = piece.h + margin;
+    const rw = piece.h + margin, rh = piece.w + margin;
+
+    // First-fit: primeira fileira aberta onde cabe
+    let idx = -1;
+    for (let i = 0; i < shelves.length; i++) {
+      if (ph <= shelves[i].h + 1e-9 && shelves[i].x + pw <= sheetW + 1e-9) { idx = i; break; }
+    }
+    if (idx === -1) idx = abreFileira(ph);
+    if (idx >= 0) {
+      pushPiece(piece, shelves[idx].x, shelves[idx].y, false);
+      shelves[idx].x += pw;
+      continue;
+    }
+    // Só cabe rotacionada — peças lane não precisam (quebraria a fileira uniforme)
+    if (rotation && !lane) {
+      let ridx = -1;
+      for (let i = 0; i < shelves.length; i++) {
+        if (rh <= shelves[i].h + 1e-9 && shelves[i].x + rw <= sheetW + 1e-9) { ridx = i; break; }
+      }
+      if (ridx === -1) ridx = abreFileira(rh);
+      if (ridx >= 0) {
+        pushPiece(piece, shelves[ridx].x, shelves[ridx].y, true);
+        shelves[ridx].x += rw;
+        continue;
+      }
+    }
+    stillRemaining.push(piece);
+  }
+
+  return { placed, stillRemaining };
 }
 
 // ────────────────────────────────────────────────────────────
