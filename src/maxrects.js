@@ -1623,8 +1623,18 @@ function _calcScrap(pieces, sheetW, sheetH, minDim, margin) {
       // 1) Estende TODOS os ativos contíguos cobertos pelo gap (find com 1
       // resultado roubava a extensão: o gap de 10mm entre colunas crescia
       // e impedia o gap à direita de atravessar as faixas entre linhas).
+      // Duas situações:
+      //  - mesma largura do gap: atravessa sempre (sobra contígua).
+      //  - gap mais largo (ex: faixa de margem entre peças empilhadas, de
+      //    largura total) só atravessa se a faixa NÃO é o fundo da chapa
+      //    (y1 < sheetH = há peças abaixo — margem/entre linhas). O fundo
+      //    vira retalho próprio — estender por ele vazava o ativo estreito
+      //    para baixo e criava retalhos sobrepostos (folha 52: faixa direita
+      //    2994×1506 + faixa inferior 5996×762 se cruzando no canto).
       for (const a of ativos) {
-        if (a.y1 === s.y0 && g.x0 <= a.x0 && g.x1 >= a.x1) a.y1 = s.y1;
+        if (a.y1 !== s.y0) continue;
+        if (g.x0 === a.x0 && g.x1 === a.x1) a.y1 = s.y1;
+        else if (g.x0 <= a.x0 && g.x1 >= a.x1 && s.y1 < sheetH) a.y1 = s.y1;
       }
       // 2) Também cria/estende um ativo com o range EXATO do gap — sem isso,
       // a sobra de largura total abaixo de um bloco (ex: 1190×790) era
@@ -1667,17 +1677,46 @@ function _calcScrap(pieces, sheetW, sheetH, minDim, margin) {
     }
   }
 
-  // Remove sobreposição: gaps paralelos formam retalhos alternativos que se
-  // sobrepõem (ex: sobra à direita de colunas com linha parcial). Mantém o
-  // maior por área — a soma dos retalhos não pode exceder a sobra real.
+  // Remove sobreposição por RECORTE: a interseção pertence ao retalho já
+  // mantido (o maior); o sobreposto é recortado em partes disjuntas,
+  // reavaliadas contra o mínimo. Antes, o retalho menor era descartado
+  // INTEIRO — a parte única (não sobreposta) virava perda indevida (ex:
+  // folha 52: faixa direita 2994×744 era descartada e contada como perda).
   if (retalhos.length > 1) {
     retalhos.sort((a, b) => b.area - a.area);
     const mantidos = [];
     for (const r of retalhos) {
-      const sobrepoe = mantidos.some(m =>
-        r.x < m.x + m.width && r.x + r.width > m.x &&
-        r.y < m.y + m.height && r.y + r.height > m.y);
-      if (!sobrepoe) mantidos.push(r);
+      let pedacos = [{ x: r.x, y: r.y, w: r.width, h: r.height }];
+      for (const m of mantidos) {
+        const prox = [];
+        for (const p of pedacos) {
+          if (!(p.x < m.x + m.width && p.x + p.w > m.x &&
+                p.y < m.y + m.height && p.y + p.h > m.y)) {
+            prox.push(p);
+            continue;
+          }
+          // acima de m
+          if (m.y > p.y && m.y - p.y >= minDim) prox.push({ x: p.x, y: p.y, w: p.w, h: m.y - p.y });
+          // abaixo de m
+          const abaixoH = p.y + p.h - (m.y + m.height);
+          if (abaixoH >= minDim) prox.push({ x: p.x, y: m.y + m.height, w: p.w, h: abaixoH });
+          // faixa vertical à esquerda de m (só na altura da interseção)
+          const yCruz = Math.min(p.y + p.h, m.y + m.height) - Math.max(p.y, m.y);
+          if (m.x > p.x && m.x - p.x >= minDim && yCruz >= minDim) {
+            prox.push({ x: p.x, y: Math.max(p.y, m.y), w: m.x - p.x, h: yCruz });
+          }
+          // faixa vertical à direita de m
+          if (p.x + p.w > m.x + m.width && (p.x + p.w) - (m.x + m.width) >= minDim && yCruz >= minDim) {
+            prox.push({ x: m.x + m.width, y: Math.max(p.y, m.y), w: p.x + p.w - (m.x + m.width), h: yCruz });
+          }
+        }
+        pedacos = prox;
+      }
+      for (const p of pedacos) {
+        if (p.w >= minDim && p.h >= minDim) {
+          mantidos.push({ x: p.x, y: p.y, width: p.w, height: p.h, area: p.w * p.h });
+        }
+      }
     }
     retalhos.length = 0;
     retalhos.push(...mantidos);
@@ -2064,4 +2103,4 @@ function _beamNest(sortedPieces, sheetW, sheetH, opts) {
   };
 }
 
-module.exports = { MaxRectsBin, nest, _calcVoidRects };
+module.exports = { MaxRectsBin, nest, _calcVoidRects, _calcScrap };
