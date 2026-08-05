@@ -234,6 +234,7 @@ class MaxRectsBin {
     this._alignW = 0;         // piece width  that triggered alignment
     this._alignH = 0;         // piece height that triggered alignment
     this._alignAnchorPos = -1; // py (alignAxis='x') ou px (alignAxis='y')
+    this._hStar = opts.hStar || null; // altura de fileira ótima do pool (null = livre)
   }
 
   /**
@@ -266,6 +267,7 @@ class MaxRectsBin {
     c._alignW = this._alignW;
     c._alignH = this._alignH;
     c._alignAnchorPos = this._alignAnchorPos;
+    c._hStar = this._hStar;
     c._strategy = this._strategy; // read-only após o constructor — clone JSON era desperdício
     c.voidRects = this.voidRects.slice();
     c.sheetRects = this.sheetRects.slice();
@@ -1834,7 +1836,7 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
     // Enumera todos (freeRect × orientação)
     for (let i = 0; i < bin.freeRects.length; i++) {
       const fr = bin.freeRects[i];
-      const opts = [];
+      let opts = [];
 
       // Orientation A
       if (mw <= fr.w && mh <= fr.h) {
@@ -1843,6 +1845,21 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
       // Orientation B (rotated) — peça quadrada: B é idêntica a A, skip (2x cands)
       if (rotation && mw !== mh && mh <= fr.w && mw <= fr.h) {
         opts.push({ px: fr.x, py: fr.y, pw: mh, ph: mw, rotated: true });
+      }
+
+      // ── h* (altura de fileira ótima): preferência forte de orientação ──
+      // Peça que adota a dimensão dominante do pool: quando a orientação
+      // com h* no Y cabe no free rect, SÓ ela compete (o beam não vê a
+      // alternativa em pé — fileiras uniformes, sobra contígua). Sem
+      // trava: em free rect apertado onde o lane não entra, o outro
+      // candidato segue como fallback. Peça sem h* (resto de pool
+      // heterogêneo) → orientação livre. Bônus/pena no score não
+      // sustentavam a preferência (score do layout é recomputado a cada
+      // iteração e o fit local domina) — o filtro é determinístico.
+      const hStarBin = bin._hStar;
+      if (hStarBin && opts.length > 1 && (piece.w === hStarBin || piece.h === hStarBin)) {
+        const lane = opts.filter(o => (o.rotated ? piece.w : piece.h) === hStarBin);
+        if (lane.length > 0) opts = lane;
       }
 
       for (const opt of opts) {
@@ -1954,6 +1971,31 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
 }
 
 /**
+ * Altura de fileira ótima (h*) do pool: a dimensão que a maioria das peças
+ * adota como um de seus lados. Quando quase todo o pool compartilha uma
+ * dimensão, colocá-la no Y produz fileiras uniformes e sobra contígua (vs
+ * tiras fragmentadas quando a mesma peça aparece ora em pé, ora deitada).
+ * Pool heterogêneo (sem dimensão dominante) ou resto com poucas peças →
+ * null (orientação livre, sem regressão).
+ */
+function _computeHStar(pieces, sheetH, margin) {
+  if (pieces.length < 3) return null;
+  const count = new Map();
+  for (const p of pieces) {
+    if (p.w === p.h) continue; // quadrada — orientação irrelevante
+    count.set(p.w, (count.get(p.w) || 0) + 1);
+    count.set(p.h, (count.get(p.h) || 0) + 1);
+  }
+  let hStar = null, best = 0;
+  for (const [d, c] of count) {
+    if (c > best) { best = c; hStar = d; }
+  }
+  if (!hStar || best < 3 || best / pieces.length < 0.9) return null;
+  if (hStar + margin > sheetH) return null;
+  return hStar;
+}
+
+/**
  * Executa Beam Search para um grupo de peças em uma chapa.
  * Retorna { placed, stillRemaining }.
  */
@@ -1963,6 +2005,9 @@ function _beamNest(sortedPieces, sheetW, sheetH, opts) {
   const margin = Math.max(0, opts.margin || 0);
   const direcao = opts.direcao || '';
   const estrategia = opts.estrategia != null ? opts.estrategia : -1;
+
+  // h* do pool desta folha — recalculado a cada folha (o pool esvazia)
+  const hStar = _computeHStar(sortedPieces, sheetH, margin);
 
   // Inicializa beam com 1 bin vazio
   const initialBin = new MaxRectsBin(sheetW, sheetH, {
@@ -1977,6 +2022,7 @@ function _beamNest(sortedPieces, sheetW, sheetH, opts) {
     zonePenalty: opts.zonePenalty,
     zoneSpanWeight: opts.zoneSpanWeight,
     adaptiveSplit: opts.adaptiveSplit,
+    hStar,
     freeRects: opts.freeRects,
     voidRects: opts.voidRects
   });
