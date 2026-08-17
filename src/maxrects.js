@@ -1053,9 +1053,11 @@ function _calcVoidRects(freeRects, bbW, bbH) {
  *
  * 1. Multi-sheet (new):  nest(pieces, sheetsArray, opts)
  *    @param {Array}  sheetsArray - [{ width, height, count? }, ...]
- *      Sheets are processed in area-ascending order (smallest first).
+ *      Sheets are processed in `sheetOrder` (default area-ascending = smallest first).
  *      `count` is the number of physical sheets of this size (0 = unlimited).
  *      Pieces allocated in earlier sheet groups are removed from later ones.
+ *      Pieces incompatible with a group's espessura/material filter are DEFERRED
+ *      (kept for later groups), never discarded.
  *
  * 2. Single-sheet (legacy):  nest(pieces, sheetW, sheetH, opts)
  *    Backward-compatible.
@@ -1065,6 +1067,7 @@ function _calcVoidRects(freeRects, bbW, bbH) {
  * @param {number|object} [sheetH] - Sheet height (mm) or options object (when sheetW is array)
  * @param {object} [opts]
  * @param {boolean} [opts.rotation=true]     - Allow 90° rotation
+ * @param {string}  [opts.sheetOrder='asc-area'] - Sheet group processing order: 'asc-area' (smaller/cheaper first, default) | 'desc-area'
  * @param {number}  [opts.margin=0]          - Gap between pieces in mm
  * @param {number}  [opts.lookAhead=1]       - Look-ahead depth (0 = greedy)
  * @param {number}  [opts.maxSheets=0]       - Max sheets in legacy mode (0 = unlimited). Ignored in multi-sheet mode.
@@ -1186,11 +1189,14 @@ function _run(pieces, sheetDescriptors, opts) {
     };
   }
 
-  // ── Sort sheets by area ASCENDING (smallest sheet first) ──
+  // ── Sort sheets by area — default ASCENDING (smallest/cheapest first) ──
+  // sheetOrder: 'asc-area' (padrão) | 'desc-area'. Na dúvida: menor chapa
+  // primeiro minimiza área/custo usados; 'desc-area' consome estoque grande.
+  const sheetOrder = opts.sheetOrder === 'desc-area' ? -1 : 1;
   const sortedSheets = [...sheetDescriptors].sort((a, b) => {
     const aa = (a.boundingWidth || a.width) * (a.boundingHeight || a.height);
     const bb = (b.boundingWidth || b.width) * (b.boundingHeight || b.height);
-    return aa - bb;
+    return (aa - bb) * sheetOrder;
   });
 
   const allSheets = [];
@@ -1199,31 +1205,6 @@ function _run(pieces, sheetDescriptors, opts) {
 
   for (const grp of sortedSheets) {
     if (remaining.length === 0) break;
-
-    // ── Filtro opcional por espessura ──────────────────────
-    // Garante que peças de espessuras diferentes NÃO sejam colocadas na mesma chapa.
-    // Quando chapa não tem espessura (grpEsp=0), infere da primeira peça disponível.
-    if (opts.filterEspessura && remaining.length > 0) {
-      const grpEsp = parseFloat(String(grp.espessura_mm != null ? grp.espessura_mm : opts.sheetEspessura).replace(',', '.')) || 0;
-      const effectiveEsp = (grpEsp > 0) ? grpEsp : (parseFloat(remaining[0].espessura_mm) || 0);
-      if (effectiveEsp > 0) {
-        remaining = remaining.filter(p => {
-          const pe = parseFloat(p.espessura_mm) || 0;
-          return pe > 0 && Math.abs(pe - effectiveEsp) < 0.01;
-        });
-        if (remaining.length === 0) continue;
-      }
-    }
-
-    // ── Filtro opcional por material ───────────────────────
-    // Garante que peças de materiais diferentes NÃO sejam misturadas na mesma chapa.
-    if (opts.filterMaterial && remaining.length > 0) {
-      const grpMat = grp.material || opts.sheetMaterial || '';
-      if (grpMat) {
-        remaining = remaining.filter(p => p.material && p.material === grpMat);
-        if (remaining.length === 0) continue;
-      }
-    }
 
     // NOVO: sheet descriptor retangular vs polígono
     const sheetW = grp.boundingWidth || grp.width;
@@ -1235,6 +1216,38 @@ function _run(pieces, sheetDescriptors, opts) {
     if (effW <= 0 || effH <= 0) continue;
 
     const sheetArea = effW * effH;
+
+    // ── Filtro opcional por espessura/material ─────────────
+    // Peças incompatíveis com o grupo NÃO são descartadas: ficam em
+    // `deferred` e voltam ao pool para grupos posteriores.
+    // (Antes o filter permanente perdia peças de outros grupos — data loss.)
+    // Quando chapa não tem espessura (grpEsp=0), infere da primeira peça disponível.
+    let deferred = [];
+    if (opts.filterEspessura && remaining.length > 0) {
+      const grpEsp = parseFloat(String(grp.espessura_mm != null ? grp.espessura_mm : opts.sheetEspessura).replace(',', '.')) || 0;
+      const effectiveEsp = (grpEsp > 0) ? grpEsp : (parseFloat(remaining[0].espessura_mm) || 0);
+      if (effectiveEsp > 0) {
+        const matchEsp = p => {
+          const pe = parseFloat(p.espessura_mm) || 0;
+          return pe > 0 && Math.abs(pe - effectiveEsp) < 0.01;
+        };
+        deferred = remaining.filter(p => !matchEsp(p));
+        remaining = remaining.filter(matchEsp);
+      }
+    }
+    if (opts.filterMaterial && remaining.length > 0) {
+      const grpMat = grp.material || opts.sheetMaterial || '';
+      if (grpMat) {
+        const matchMat = p => p.material && p.material === grpMat;
+        deferred = deferred.concat(remaining.filter(p => !matchMat(p)));
+        remaining = remaining.filter(matchMat);
+      }
+    }
+    if (remaining.length === 0) {
+      // Nenhuma peça compatível com este grupo — devolve tudo ao pool
+      remaining = deferred;
+      continue;
+    }
     const groupSheets = [];
 
     // NOVO: prepara freeRects/voidRects para polígono
@@ -1257,7 +1270,7 @@ function _run(pieces, sheetDescriptors, opts) {
       remaining = remaining.filter(p => !fitSet.has(p));
       if (remaining.length === 0) {
         // Todas as peças são maiores que a chapa — pula grupo
-        remaining.push(...tooLarge);
+        remaining.push(...tooLarge, ...deferred);
         continue;
       }
     }
@@ -1516,6 +1529,12 @@ function _run(pieces, sheetDescriptors, opts) {
     // Reintegra peças que excediam esta chapa — podem caber em grupos com chapas maiores
     if (tooLarge.length > 0) {
       remaining.push(...tooLarge);
+    }
+
+    // Reintegra peças incompatíveis com este grupo (filtro espessura/material)
+    // — poupadas, não descartadas; podem caber em grupos posteriores.
+    if (deferred.length > 0) {
+      remaining.push(...deferred);
     }
 
     allSheets.push(...groupSheets);

@@ -52,6 +52,7 @@ const result = nest(
 | Option | Default | Description |
 |---|---|---|
 | `rotation` | `true` | Allow 90° rotation |
+| `sheetOrder` | `'asc-area'` | Multi-sheet group processing order: `'asc-area'` (smaller/cheapest first — minimizes total sheet area) or `'desc-area'` (consume large sheets first) |
 | `margin` | `0` | Gap between pieces (mm) |
 | `lookAhead` | `1` | Look-ahead depth (0 = greedy) |
 | `maxSheets` | `0` | Max sheets for this sheet group (0 = unlimited). **Upper bound** — the algorithm stops as soon as pieces are exhausted (`remaining.length === 0`). It does NOT recycle pieces to fill all `maxSheets` sheets. |
@@ -61,8 +62,8 @@ const result = nest(
 | `velocidadeCorte` | `0` | Cutting speed constant in mm²/min. Formula: `perim / (K / espessura)`. When set, calculates `tempo_corte_min` per piece and `perimetro_mm` |
 | `minDimensaoRetalho` | `0` | Minimum useful dimension in mm (applies to BOTH width and height — axis does not matter). A free gap is reported as retalho only when `min(largura, altura) - margin ≥ valor`; below that it is perda. `0` = skip retalhos entirely |
 | `estrategia` | `-1` (disabled) | Packing strategy: `0` = Vertical (single column), `1` = Horizontal (single row), `2` = Supreme (BRS + waste penalty + adaptive split, minimizes leftover). When set (0-2), overrides `direcao` and controls sort order, scoring tier weights, and split bias internally. `-1` = disabled — uses classic `direcao` mode for backward compatibility |
-| `filterEspessura` | `0` | When `1`, filters out pieces whose `espessura_mm` does not match the sheet's `espessura_mm` (or `sheetEspessura`). Pieces with `espessura_mm=0` (unspecified) pass through. Requires sheet to have `espessura_mm` (in multi-sheet mode) or `sheetEspessura` in opts (legacy single-sheet mode) |
-| `filterMaterial` | `0` | When `1`, filters out pieces whose `material` does not match the sheet's `material`. Pieces without `material` pass through. Requires sheet to have `material` (in multi-sheet mode) or `sheetMaterial` in opts (legacy single-sheet mode) |
+| `filterEspessura` | `0` | When `1`, keeps only pieces whose `espessura_mm` matches the sheet's `espessura_mm` (or `sheetEspessura`); pieces with `espessura_mm=0` (unspecified) are treated as incompatible. In multi-sheet mode, incompatible pieces are **deferred** (rejoin the pool for later groups), never discarded. Requires sheet to have `espessura_mm` (in multi-sheet mode) or `sheetEspessura` in opts (legacy single-sheet mode) |
+| `filterMaterial` | `0` | When `1`, keeps only pieces whose `material` matches the sheet's `material`; pieces without `material` are treated as incompatible. In multi-sheet mode, incompatible pieces are **deferred** (rejoin the pool for later groups), never discarded. Requires sheet to have `material` (in multi-sheet mode) or `sheetMaterial` in opts (legacy single-sheet mode) |
 | `sheetEspessura` | `0` | Sheet thickness in mm. Used as fallback when `filterEspessura=1` and the sheet descriptor has no `espessura_mm`. Also used directly in legacy single-sheet mode |
 | `sheetMaterial` | `''` | Sheet material. Used as fallback when `filterMaterial=1` and the sheet descriptor has no `material`. Also used directly in legacy single-sheet mode |
 
@@ -177,6 +178,7 @@ All parameters below are optional unless marked as required.
 | Opt | Type | Default | Description |
 |-----|------|---------|-------------|
 | `rotation` | `boolean` | `true` | Allow 90° rotation |
+| `sheetOrder` | `string` | `'asc-area'` | Multi-sheet group processing order: `'asc-area'` (smaller/cheapest first — minimizes total sheet area) or `'desc-area'` (consume large sheets first) |
 | `margin` | `number` | `0` | Gap between pieces (mm) |
 | `borda_mm` | `number` | `0` | Border deducted from each sheet edge (mm) |
 | `lookAhead` | `number` | `strategyCfg.lookAhead ?? 1` | Look-ahead depth (0 = greedy). Overrides strategy default |
@@ -193,14 +195,16 @@ All parameters below are optional unless marked as required.
 | `densidade` | `number` | `0` | Material density g/cm³ (e.g. 7.85 for steel). If > 0, calculates `peso_kg` per piece |
 | `velocidadeCorte` | `number` | `0` | Cutting constant mm²/min. If > 0, calculates `tempo_corte_min = perim / (K / esp)` |
 | `minDimensaoRetalho` | `number` | `0` | Minimum useful dimension (mm) for retalho. Gap vira retalho só se `min(largura, altura) - margin ≥ valor`. `0` = skip retalhos |
-| `filterEspessura` | `number` | `0` | When `1`, filters out pieces whose `espessura_mm` doesn't match the sheet's |
-| `filterMaterial` | `number` | `0` | When `1`, filters out pieces whose `material` doesn't match the sheet's |
+| `filterEspessura` | `number` | `0` | When `1`, keeps only pieces whose `espessura_mm` matches the sheet's; `espessura_mm=0` treated as incompatible. Multi-sheet: incompatible pieces deferred, never discarded |
+| `filterMaterial` | `number` | `0` | When `1`, keeps only pieces whose `material` matches the sheet's; pieces without `material` treated as incompatible. Multi-sheet: incompatible pieces deferred, never discarded |
 | `sheetEspessura` | `number` | `0` | Fallback sheet thickness when sheet descriptor has no `espessura_mm` |
 | `sheetMaterial` | `string` | `''` | Fallback sheet material when sheet descriptor has no `material` |
 
 ### Multi-sheet descriptors
 
-When calling `nest(pieces, sheets, opts)`, each sheet descriptor supports:
+When calling `nest(pieces, sheets, opts)`, sheets are processed in **area-ascending order** (smallest/cheapest first) by default — the greedy that minimizes total sheet area/cost. Pieces allocated to an earlier group are removed from later ones. Pieces that don't match a group's espessura/material filter are deferred, not lost. Override with `opts.sheetOrder: 'desc-area'` to consume large sheets first.
+
+Each sheet descriptor supports:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
