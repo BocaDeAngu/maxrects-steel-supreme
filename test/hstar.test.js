@@ -63,3 +63,19 @@ test('h* não força quadrada nem peça sem a dimensão dominante', () => {
   assert.strictEqual(r.unplaced, 0);
   for (const s of r.sheets) assertNoOverlap(s.pieces, s.sheetWidth, s.sheetHeight, 'misto');
 });
+
+test('h* empate (dimensão w=h igual no pool): fica com a MAIOR — 5×1150x1400 em chapa 1500x6000 cabe 5 na 1ª chapa', () => {
+  // Bug: no empate 1150/1400 (mesma contagem), h* pegava a 1ª (1150) e
+  // forçava rotação → 4 por chapa (R1400x1150), 2 chapas. Com h*=1400,
+  // Y=1400 preenche a largura 1500 e o X empilha 5 (5×1150=5750≤6000).
+  const r = nest(
+    [{ w: 1150, h: 1400, quantity: 5, label: 'P' }],
+    6000, 1500,
+    { margin: 0, estrategia: 2, rotation: true }
+  );
+  assert.strictEqual(r.stats.totalSheets, 1, '5 peças devem caber em 1 chapa');
+  const f = r.sheets[0];
+  assert.strictEqual(f.pieces.length, 5);
+  assert.strictEqual(f.pieces.every(p => !p.rotated), true, 'orientação natural (1150 no X, 1400 no Y)');
+  assertNoOverlap(f.pieces, 6000, 1500, 'h* tie');
+});

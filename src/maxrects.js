@@ -2199,10 +2199,15 @@ function _computeHStar(pieces, sheetH, margin) {
   }
   let hStar = null, best = 0;
   for (const [d, c] of count) {
-    if (c > best) { best = c; hStar = d; }
+    // Só dimensões que cabem como altura de fileira no Y da chapa
+    if (d + margin > sheetH) continue;
+    // Desempate: empate fica com a MAIOR dimensão — preenche o Y da
+    // chapa (largura) e empilha mais peças no X. Antes pegava a 1ª
+    // (menor quando w<h) e forçava rotação pior: 1150x1400×5 em chapa
+    // 1500x6000 virava 4 por chapa (R1400x1150) em vez de 5.
+    if (c > best || (c === best && hStar !== null && d > hStar)) { best = c; hStar = d; }
   }
   if (!hStar || best < 3 || best / pieces.length < 0.9) return null;
-  if (hStar + margin > sheetH) return null;
   return hStar;
 }
 
