@@ -34,11 +34,10 @@ const result = nest(
     rotation: true,      // allow 90° rotation
     maxSheets: 0,        // 0 = unlimited
     borda_mm: 0,         // border deducted from each edge (mm)
-    sentido: '',          // nesting direction: '' (auto), 'largura', 'comprimento'
     densidade: 0,        // material density g/cm³ (0=skip). Steel ≈ 7.85
     velocidadeCorte: 0,  // cutting constant mm²/min (0=skip)
     minDimensaoRetalho: 100, // min scrap dimension (mm); retalho se min(largura, altura) ≥ valor (0=skip)
-    estrategia: 0,        // 0=Vertical, 1=Horizontal, 2=Supreme (overrides `direcao`)
+    estrategia: 0,        // 0=Vertical, 1=Horizontal, 2=Supreme, 3=Guilhotina (overrides `direcao`)
     filterEspessura: 0,   // 1 = filter pieces by sheetEspessura (skip incompatible espessura)
     filterMaterial: 0,    // 1 = filter pieces by sheetMaterial (skip incompatible material)
     sheetEspessura: 0,    // sheet thickness (mm), used when filterEspessura=1
@@ -57,11 +56,10 @@ const result = nest(
 | `lookAhead` | `1` | Look-ahead depth (0 = greedy) |
 | `maxSheets` | `0` | Max sheets for this sheet group (0 = unlimited). **Upper bound** — the algorithm stops as soon as pieces are exhausted (`remaining.length === 0`). It does NOT recycle pieces to fill all `maxSheets` sheets. |
 | `borda_mm` | `0` | Border deducted from each sheet edge. Positions are offset by this value so they match the real sheet coordinates |
-| `sentido` | `''` | Nesting direction preference. `'largura'` prioritizes horizontal rows (full-width strips). `'comprimento'` prioritizes vertical columns (full-height strips). Empty string = automatic |
 | `densidade` | `0` | Material density in g/cm³. When set (e.g. `7.85` for steel), calculates `peso_kg` per piece and `peso_total_kg` in stats. Requires `espessura_mm` on each piece |
 | `velocidadeCorte` | `0` | Cutting speed constant in mm²/min. Formula: `perim / (K / espessura)`. When set, calculates `tempo_corte_min` per piece and `perimetro_mm` |
 | `minDimensaoRetalho` | `0` | Minimum useful dimension in mm (applies to BOTH width and height — axis does not matter). A free gap is reported as retalho only when `min(largura, altura) - margin ≥ valor`; below that it is perda. `0` = skip retalhos entirely |
-| `estrategia` | `-1` (disabled) | Packing strategy: `0` = Vertical (single column), `1` = Horizontal (single row), `2` = Supreme (BAF + squareness + adaptive split). When set (0-2), overrides `direcao` and controls sort order, scoring tier weights, and split bias internally. `-1` = disabled — uses classic `direcao` mode for backward compatibility |
+| `estrategia` | `-1` (disabled) | Packing strategy: `0` = Vertical (single column), `1` = Horizontal (single row), `2` = Supreme (BAF + squareness + adaptive split), `3` = Guilhotina (shelf NFDH + h*, guillotine-cuttable by construction). When set (0-3), overrides `direcao` and controls sort order, scoring tier weights, and split bias internally. `-1` = disabled — uses classic `direcao` mode for backward compatibility |
 | `filterEspessura` | `0` | When `1`, keeps only pieces whose `espessura_mm` matches the sheet's `espessura_mm` (or `sheetEspessura`); pieces with `espessura_mm=0` (unspecified) are treated as incompatible. In multi-sheet mode, incompatible pieces are **deferred** (rejoin the pool for later groups), never discarded. Requires sheet to have `espessura_mm` (in multi-sheet mode) or `sheetEspessura` in opts (legacy single-sheet mode) |
 | `filterMaterial` | `0` | When `1`, keeps only pieces whose `material` matches the sheet's `material`; pieces without `material` are treated as incompatible. In multi-sheet mode, incompatible pieces are **deferred** (rejoin the pool for later groups), never discarded. Requires sheet to have `material` (in multi-sheet mode) or `sheetMaterial` in opts (legacy single-sheet mode) |
 | `sheetEspessura` | `0` | Sheet thickness in mm. Used as fallback when `filterEspessura=1` and the sheet descriptor has no `espessura_mm`. Also used directly in legacy single-sheet mode |
@@ -185,12 +183,12 @@ All parameters below are optional unless marked as required.
 | `lookAheadOverride` | `number` | `undefined` | Override applied to the strategy config. `opts.lookAhead` has precedence on the greedy path; the Beam Search path uses its own remaining-piece score and does not call look-ahead scoring |
 | `maxSheets` | `number` | `0` | Max sheets (0 = unlimited). Upper bound — stops when pieces exhausted |
 | `direcao` | `string` | `''` | Nesting sense: `'vertical'` / `'horizontal'` / `''`. Overridden when `estrategia >= 0` |
-| `estrategia` | `number` | `-1` | Packing strategy: `0`=Vertical, `1`=Horizontal, `2`=Supreme (BAF + squareness + adaptive split). Overrides `direcao` and controls sort, tiers, split bias internally. `-1` = disabled (classic direcao fallback) |
+| `estrategia` | `number` | `-1` | Packing strategy: `0`=Vertical, `1`=Horizontal, `2`=Supreme (BAF + squareness + adaptive split), `3`=Guilhotina (shelf NFDH + h*, guillotine-cuttable by construction). Overrides `direcao` and controls sort, tiers, split bias internally. `-1` = disabled (classic direcao fallback) |
 | `sortMode` | `string` | `undefined` | Sort override: `'area-desc'` / `'width-desc'` / `'height-desc'`. Replaces the strategy's default sort |
-| `splitBias` | `number` | `undefined` | Override split bias (0-100). Strategy defaults: 40 (Vertical), 60 (Horizontal), 38 (Supreme) |
+| `splitBias` | `number` | `undefined` | Override split bias (0-100). Strategy defaults: 40 (Vertical), 60 (Horizontal), 38 (Supreme), 50 (Guilhotina) |
 | `tiers` | `object` | `undefined` | **Full tier override.** Pass `{ tier2: { weight, mode }, tier3: ... }` to replace the strategy's tier configuration entirely |
-| `zonaPct` | `number` | `strategyCfg.zonaPct ?? 1` | Zone policy (0 = off, >0 = on). Supreme consumes the current Y column before opening a new X column. Strategy default: 1 for Vertical, Horizontal, and Supreme |
-| `beamWidth` | `number` | `0` (disabled) | Beam Search width. When > 0, activates `_beamNest` tree search instead of the greedy loop. Without an explicit override, Supreme supplies `35` |
+| `zonaPct` | `number` | `strategyCfg.zonaPct ?? 1` | Zone policy (0 = off, >0 = on). Supreme consumes the current Y column before opening a new X column. Strategy default: 1 for Vertical, Horizontal, and Supreme; 0 for Guilhotina |
+| `beamWidth` | `number` | `0` (disabled) | Beam Search width. When > 0, activates `_beamNest` tree search instead of the greedy loop. Without an explicit override, Supreme supplies `35`; Guilhotina stays `0` (shelf path) |
 | `repeticoes` | `boolean` | `undefined` | When truthy, deduplicates identical sheet layouts and collapses them into `qtd_copias` |
 | `densidade` | `number` | `0` | Material density g/cm³ (e.g. 7.85 for steel). If > 0, calculates `peso_kg` per piece |
 | `velocidadeCorte` | `number` | `0` | Cutting constant mm²/min. If > 0, calculates `tempo_corte_min = perim / (K / esp)` |
@@ -229,27 +227,27 @@ Each sheet descriptor supports:
 
 ### Strategy configuration (`_strategyConfig`)
 
-Each `estrategia` (0/1/2) has a built-in config. Every field can be overridden via the `opts` above.
+Each `estrategia` (0/1/2/3) has a built-in config. Every field can be overridden via the `opts` above.
 
 #### Defaults per strategy
 
 These are defaults applied after `estrategia` selects a strategy. They are distinct from common API defaults above. An explicit option wins over the selected strategy where that option is consumed by the active path.
 
-| Field | Vertical (0) | Horizontal (1) | Supreme (2) |
-|-------|-------------|----------------|---------------|
-| `direcao` | `'vertical'` | `'horizontal'` | `''` (none) |
-| sort order | width-desc | height-desc | area-desc |
-| `lookAhead` | **0** | **0** | **0** |
-| `splitBias` | 40 | 60 | 38 |
-| `zonaPct` | 1 (beam-only) | 1 (beam-only) | 1 (active, Y-first) |
-| `beamWidth` | 0 | 0 | 35 |
-| `rotationMode` | **`'fit-only'`** | **`'fit-only'`** | — (normal) |
-| **tier2** | **direcao × 1.0** | **direcao × 1.0** | baf × 4.76 |
-| **tier4** | 0 | 0 | 0 |
-| **tier5** | 0 | 0 | 4.75 |
-| others | 0 (off) | 0 (off) | 0 (off) |
+| Field | Vertical (0) | Horizontal (1) | Supreme (2) | Guilhotina (3) |
+|-------|-------------|----------------|---------------|----------------|
+| `direcao` | `'vertical'` | `'horizontal'` | `''` (none) | `''` (none) |
+| sort order | width-desc | height-desc | area-desc | height-desc (NFDH) |
+| `lookAhead` | **0** | **0** | **0** | **0** |
+| `splitBias` | 40 | 60 | 38 | 50 |
+| `zonaPct` | 1 (beam-only) | 1 (beam-only) | 1 (active, Y-first) | 0 (off) |
+| `beamWidth` | 0 | 0 | 35 | 0 (shelf path) |
+| `rotationMode` | **`'fit-only'`** | **`'fit-only'`** | — (normal) | — (normal) |
+| **tier2** | **direcao × 1.0** | **direcao × 1.0** | baf × 4.76 | 0 (off) |
+| **tier4** | 0 | 0 | 0 | 0 |
+| **tier5** | 0 | 0 | 4.75 | 0 |
+| others | 0 (off) | 0 (off) | 0 (off) | 0 (off) |
 
-`beamWidth` selects the active path: `0` uses greedy placement; a positive value uses Beam Search. `lookAhead` and tier weights affect greedy candidate scoring. Beam Search scores remaining pieces through `_scoreLayout` instead of calling `_scoreCandidate`, so `lookAhead` and `tiers` do not change a beam layout; use `beamWidth: 0` when those greedy overrides are required.
+`beamWidth` selects the active path: `0` uses greedy placement; a positive value uses Beam Search. `lookAhead` and tier weights affect greedy candidate scoring. Beam Search scores remaining pieces through `_scoreLayout` instead of calling `_scoreCandidate`, so `lookAhead` and `tiers` do not change a beam layout; use `beamWidth: 0` when those greedy overrides are required. Guilhotina (3) never enters the beam/greedy paths: `_run` dispatches directly to the shelf algorithm (`_shelfNest`), so `beamWidth`, `lookAhead`, and `tiers` have no effect there.
 
 #### How direction works
 
@@ -258,10 +256,13 @@ These are defaults applied after `estrategia` selects a strategy. They are disti
 | Vertical (0) | `cand.py × binArea / binH` | Higher Y = better → prefers BOTTOM rect → columns consume Y |
 | Horizontal (1) | `cand.px × binArea / binW` | Higher X = better → prefers RIGHT rect → rows consume X |
 | Supreme (2) | BAF + adaptive split + zoning | Minimizes leftover, near-square blocks with adaptive split |
+| Guilhotina (3) | shelf NFDH + h* (no position scoring) | Edge-to-edge rows; guillotine-cuttable by construction (H cuts between rows, V cuts inside rows) |
 
 **Vertical and Horizontal** use pure position-based scoring (`mode: 'direcao'`) with `rotationMode: 'fit-only'` — no BRS, no waste penalty, no squareness, no look-ahead. The score simply rewards placements that consume the target axis. Rotation only occurs when the original orientation doesn't fit in any free rect — never for scoring advantage. This gives clear directional layouts without unnecessary rotation.
 
 **Supreme** is the advanced strategy: uses BAF for piece-to-space fit, adaptive split (threshold 0.5, inspired by the binary-tree lightmap packer), active Y-first zoning (`zonaPct=1`) and Beam Search (beamWidth=35) for compact rectangular blocks. It fills the current Y column whenever the next piece fits there, then opens a new column in X.
+
+**Guilhotina** is the cuttable strategy: shelf NFDH (height-descending) builds edge-to-edge rows, and h* (the pool's dominant dimension as row height) keeps rows uniform, minimizing internal gaps. It is cuttable by construction — horizontal cuts between rows plus vertical cuts inside each row — and never uses beam/greedy placement.
 
 ---
 
