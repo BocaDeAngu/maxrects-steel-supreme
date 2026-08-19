@@ -113,12 +113,9 @@ function _strategyConfig(estrategia) {
         sortComparator: (a, b) => (b.w * b.h) - (a.w * a.h),
         lookAhead: 0,
         splitBias: 38,
-        // zonaPct=0 (DEFAULT DA BIBLIOTECA): zoneamento desligado.
-        // Opt-in: quem usa o pacote decide ligar passando zonaPct:1
-        // (ex: o piloto configura 1). A linha virtual penaliza peça que
-        // ultrapassa a coluna em X enquanto há peça que cabe na coluna e
-        // Y livre — força empilhar em Y em vez de estender só no X.
-        zonaPct: 0,
+        // zonaPct>0 mantém a política Y-first: enquanto a coluna atual
+        // comporta a peça, o Supreme não abre uma nova coluna em X.
+        zonaPct: 1,
         beamWidth: 35,
         tiers: {
           tier2: { weight: 4.76, mode: 'baf' },
@@ -318,7 +315,7 @@ class MaxRectsBin {
 
     // ── rotationMode: 'fit-only' tenta sem rotação primeiro ──
     // Só rotaciona se a orientação original não couber em nenhum free rect.
-    const candidates = [];
+    let candidates = [];
 
     // Pass 1: orientação original
     for (let i = 0; i < this.freeRects.length; i++) {
@@ -346,11 +343,14 @@ class MaxRectsBin {
       }
     }
 
-    // Pass 3: modo normal (ambas orientações juntas)
-    if (candidates.length === 0 && rotation && rotation !== 'fit-only') {
+    // Pass 3: Supreme normal — preserva candidatos naturais e acrescenta
+    // rotações, mesmo quando a orientação natural já cabe em outro espaço.
+    // As estratégias direcionais usam fit-only e não entram neste caminho.
+    if (this.estrategia === 2 && rotation && rotation !== 'fit-only') {
+      const addNatural = candidates.length === 0;
       for (let i = 0; i < this.freeRects.length; i++) {
         const fr = this.freeRects[i];
-        if (mw <= fr.w && mh <= fr.h) {
+        if (addNatural && mw <= fr.w && mh <= fr.h) {
           candidates.push({
             frIdx: i, px: fr.x, py: fr.y,
             pw: mw, ph: mh,
@@ -368,6 +368,17 @@ class MaxRectsBin {
     }
 
     if (candidates.length === 0) return null;
+
+    // Supreme: consome Y antes de abrir coluna em X quando há uma
+    // alternativa real dentro da coluna atual. A zona é uma preferência
+    // do Supreme; Vertical/Horizontal mantêm seus eixos explícitos.
+    if (this.estrategia === 2 && this._strategy?.zonaPct > 0 &&
+        this._zonaX !== null && this._zonaX !== undefined) {
+      const fitsCurrentColumn = candidates.some(c => c.px + c.pw <= this._zonaX);
+      if (fitsCurrentColumn) {
+        candidates = candidates.filter(c => c.px + c.pw <= this._zonaX);
+      }
+    }
 
     // ── Score each candidate ────────────────────────────────
     let best = null;
@@ -396,6 +407,17 @@ class MaxRectsBin {
     this.placed.push(placedRect);
     this._placedArea += placedRect.width * placedRect.height;
     this._splitRect(best.frIdx, best.px, best.py, best.pw, best.ph);
+
+    if (this.estrategia === 2 && this._strategy?.zonaPct > 0) {
+      const br = best.px + best.pw;
+      const bb = best.py + best.ph;
+      if (this._zonaX === null || this._zonaX === undefined || br > this._zonaX) {
+        this._zonaX = br;
+        this._zonaColMaxY = bb;
+      } else if (bb > this._zonaColMaxY) {
+        this._zonaColMaxY = bb;
+      }
+    }
 
     // ── Clip free rects that overlap the newly placed piece ──
     // _splitRect only acts on the free rect where the piece was placed.
@@ -1994,7 +2016,7 @@ function _scoreLayout(bin, remaining, rotation) {
   // ── Zona (zonaPct > 0) ───────────────────────────────────
   // Fator de penalidade da linha virtual, calculado no _beamInsert quando
   // a peça ultrapassa a linha com peças cabíveis restantes e Y livre na
-  // coluna. 0 = desligado (padrão Supreme) — beam otimiza compactness.
+  // coluna. 0 = desligado — sem zona o beam otimiza compactness.
   const zonaPct = bin._strategy?.zonaPct ?? 0; // 0 = desligado
 
   // Skip quando zonaPct <= 0 (desligado)
@@ -2010,10 +2032,20 @@ function _scoreLayout(bin, remaining, rotation) {
     return rawScore * zoneFactor;
   }
 
-  // Sem zonas (zonaPct <= 1): score puro
+  // Sem zonas (zonaPct <= 0): score puro
   const brsNorm = Math.min(1, largestFree / (bin.binW * bin.binH));
   const slw = bin._strategy?.scoreLayoutWeights || { compactness: 0.25, avgFit: 0.35, brsNorm: 0.15 };
   return compactness * slw.compactness + avgFit * slw.avgFit + brsNorm * slw.brsNorm;
+}
+
+function _fitsWithinZone(bin, piece, zoneX, rotation) {
+  const mw = piece.w + bin.margin;
+  const mh = piece.h + bin.margin;
+  for (const fr of bin.freeRects) {
+    if (mw <= fr.w && mh <= fr.h && fr.x + mw <= zoneX) return true;
+    if (rotation && mw !== mh && mh <= fr.w && mw <= fr.h && fr.x + mh <= zoneX) return true;
+  }
+  return false;
 }
 
 /**
@@ -2043,31 +2075,38 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
     const bin = entry.bin;
     const mw = piece.w + bin.margin;
     const mh = piece.h + bin.margin;
+    const hStarBin = bin._hStar;
+    const optionsFor = (fr) => {
+      const opts = [];
+      if (mw <= fr.w && mh <= fr.h) {
+        opts.push({ px: fr.x, py: fr.y, pw: mw, ph: mh, rotated: false });
+      }
+      // Peça quadrada: orientação B é idêntica à A, skip (2x cands).
+      if (rotation && mw !== mh && mh <= fr.w && mw <= fr.h) {
+        opts.push({ px: fr.x, py: fr.y, pw: mh, ph: mw, rotated: true });
+      }
+      return opts;
+    };
+
+    // Se há encaixe real na coluna atual, remove candidatos que abririam X.
+    // Isto também cobre a última peça: `remaining` vazio não desliga a regra.
+    const zoneX = bin._zonaX;
+    const zoneActive = bin.estrategia === 2 && bin._strategy?.zonaPct > 0 &&
+      zoneX !== null && zoneX !== undefined;
+    const fitsCurrentColumn = zoneActive && bin.freeRects.some(fr =>
+      optionsFor(fr).some(opt => opt.px + opt.pw <= zoneX)
+    );
 
     // Enumera todos (freeRect × orientação)
     for (let i = 0; i < bin.freeRects.length; i++) {
       const fr = bin.freeRects[i];
-      let opts = [];
+      let opts = optionsFor(fr);
 
-      // Orientation A
-      if (mw <= fr.w && mh <= fr.h) {
-        opts.push({ px: fr.x, py: fr.y, pw: mw, ph: mh, rotated: false });
+      // Y-first tem precedência sobre h*: primeiro preserva a coluna atual;
+      // depois aplica preferência de orientação entre os candidatos válidos.
+      if (fitsCurrentColumn) {
+        opts = opts.filter(opt => opt.px + opt.pw <= zoneX);
       }
-      // Orientation B (rotated) — peça quadrada: B é idêntica a A, skip (2x cands)
-      if (rotation && mw !== mh && mh <= fr.w && mw <= fr.h) {
-        opts.push({ px: fr.x, py: fr.y, pw: mh, ph: mw, rotated: true });
-      }
-
-      // ── h* (altura de fileira ótima): preferência forte de orientação ──
-      // Peça que adota a dimensão dominante do pool: quando a orientação
-      // com h* no Y cabe no free rect, SÓ ela compete (o beam não vê a
-      // alternativa em pé — fileiras uniformes, sobra contígua). Sem
-      // trava: em free rect apertado onde o lane não entra, o outro
-      // candidato segue como fallback. Peça sem h* (resto de pool
-      // heterogêneo) → orientação livre. Bônus/pena no score não
-      // sustentavam a preferência (score do layout é recomputado a cada
-      // iteração e o fit local domina) — o filtro é determinístico.
-      const hStarBin = bin._hStar;
       if (hStarBin && opts.length > 1 && (piece.w === hStarBin || piece.h === hStarBin)) {
         const lane = opts.filter(o => (o.rotated ? piece.w : piece.h) === hStarBin);
         if (lane.length > 0) opts = lane;
@@ -2144,8 +2183,12 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
             // dentro da coluna atual — empilha em Y
             if (bb > clone._zonaColMaxY) clone._zonaColMaxY = bb;
           } else {
-            // ultrapassa a linha — só é punido se ainda há peça que caiba
-            const cabeAlguma = remaining.some(p => Math.min(p.w, p.h) <= zX);
+            // A peça atual já foi tratada pelo filtro Y-first. Aqui só
+            // importa se alguma peça futura cabe de fato na coluna, com
+            // margem e rotação respeitadas.
+            const cabeAlguma = remaining.some(p =>
+              _fitsWithinZone(clone, p, zX, rotation)
+            );
             if (cabeAlguma) {
               const yFree = Math.max(0, Math.min(1, (clone.binH - clone._zonaColMaxY) / clone.binH));
               const ultrapRatio = Math.min(1, (br - zX) / Math.max(1, zX));

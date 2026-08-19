@@ -189,7 +189,7 @@ All parameters below are optional unless marked as required.
 | `sortMode` | `string` | `undefined` | Sort override: `'area-desc'` / `'width-desc'` / `'height-desc'`. Replaces the strategy's default sort |
 | `splitBias` | `number` | `undefined` | Override split bias (0-100). Strategy defaults: 40 (Vertical), 60 (Horizontal), 38 (Supreme) |
 | `tiers` | `object` | `undefined` | **Full tier override.** Pass `{ tier2: { weight, mode }, tier3: ... }` to replace the strategy's tier configuration entirely |
-| `zonaPct` | `number` | `strategyCfg.zonaPct ?? 80` | Zone percent (1-99). Controls horizontal compaction anti-spread. 1 = whole sheet (no zoning). Strategy defaults: 1 (Vertical/Horizontal), 17 (Supreme) |
+| `zonaPct` | `number` | `strategyCfg.zonaPct ?? 1` | Zone policy (0 = off, >0 = on). Supreme consumes the current Y column before opening a new X column. Strategy default: 1 for Vertical, Horizontal, and Supreme |
 | `beamWidth` | `number` | `0` (disabled) | Beam Search width. When > 0, activates `_beamNest` tree search instead of the greedy loop |
 | `repeticoes` | `boolean` | `undefined` | When truthy, deduplicates identical sheet layouts and collapses them into `qtd_copias` |
 | `densidade` | `number` | `0` | Material density g/cm³ (e.g. 7.85 for steel). If > 0, calculates `peso_kg` per piece |
@@ -239,7 +239,7 @@ Each `estrategia` (0/1/2) has a built-in config. Every field can be overridden v
 | sort order | width-desc | height-desc | area-desc |
 | `lookAhead` | **0** | **0** | **3** |
 | `splitBias` | 40 | 60 | 50 |
-| `zonaPct` | 1 (off) | 1 (off) | 80 (active) |
+| `zonaPct` | 1 (beam-only) | 1 (beam-only) | 1 (active, Y-first) |
 | `rotationMode` | **`'fit-only'`** | **`'fit-only'`** | — (normal) |
 | **tier2** | **direcao × 1.0** | **direcao × 1.0** | baf × 1.0 |
 | **tier4** | 0 | 0 | 1.5 |
@@ -256,7 +256,7 @@ Each `estrategia` (0/1/2) has a built-in config. Every field can be overridden v
 
 **Vertical and Horizontal** use pure position-based scoring (`mode: 'direcao'`) with `rotationMode: 'fit-only'` — no BRS, no waste penalty, no squareness, no look-ahead. The score simply rewards placements that consume the target axis. Rotation only occurs when the original orientation doesn't fit in any free rect — never for scoring advantage. This gives clear directional layouts without unnecessary rotation.
 
-**Supreme** is the advanced strategy: uses BAF for piece-to-space fit, adaptive split (threshold 0.5, inspired by the binary-tree lightmap packer), active zoning (zonaPct=17) with strong zone penalty, zone span penalty, and Beam Search (beamWidth=35) for compact rectangular blocks.
+**Supreme** is the advanced strategy: uses BAF for piece-to-space fit, adaptive split (threshold 0.5, inspired by the binary-tree lightmap packer), active Y-first zoning (`zonaPct=1`) and Beam Search (beamWidth=35) for compact rectangular blocks. It fills the current Y column whenever the next piece fits there, then opens a new column in X.
 
 ---
 
