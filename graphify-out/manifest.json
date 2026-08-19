@@ -6,12 +6,12 @@
   },
   "benchmark-baseline.json": {
     "mtime": 1783973973.191687,
-    "ast_hash": "1e534f2c148a917731cdec4ef7db539c",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "benchmark-deepseek.json": {
     "mtime": 1783964005.6036804,
-    "ast_hash": "20032a77486ac682ca51f8d938d8eed3",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "benchmark.js": {
@@ -35,28 +35,13 @@
     "semantic_hash": ""
   },
   "src/maxrects.js": {
-    "mtime": 1785445751.2522428,
-    "ast_hash": "9f9bda6c1db6901bb7c92baab678e744",
+    "mtime": 1787143068.0674465,
+    "ast_hash": "aa182870022f97a76a081216e89dda86",
     "semantic_hash": ""
   },
   "src/sort.js": {
     "mtime": 1783977577.252713,
     "ast_hash": "9f187d8d06082de43e17a6a24b339b22",
-    "semantic_hash": ""
-  },
-  "test/estrategia.test.js": {
-    "mtime": 1784132271.2960374,
-    "ast_hash": "23c64c3f87a24b7420b416c45cd29db8",
-    "semantic_hash": ""
-  },
-  "test/index.test.js": {
-    "mtime": 1784130087.1190917,
-    "ast_hash": "a236fbf4a3cc6a4c9a97b33fd4a8222a",
-    "semantic_hash": ""
-  },
-  "test/validate-layout.mjs": {
-    "mtime": 1784131823.4148524,
-    "ast_hash": "0fbd53290f7da2d4a5a8a6ce0c6e9386",
     "semantic_hash": ""
   },
   "tmp_borda.js": {
@@ -65,8 +50,8 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1784197014.1467185,
-    "ast_hash": "308c0e8e507051563a170c00b67b8494",
+    "mtime": 1787145763.1424935,
+    "ast_hash": "a403007f7eeb398db31cf18a66f3fd2c",
     "semantic_hash": ""
   },
   "_output.txt": {
@@ -74,59 +59,54 @@
     "ast_hash": "bf3ca506475278368e5339d251c55737",
     "semantic_hash": ""
   },
-  "test/output/Chapa_SAC_350__real____Estrategia_0_sheet0.svg": {
-    "mtime": 1784132281.6058486,
-    "ast_hash": "0c9bb230eeed80b6cadc2e3333ae8e6f",
+  "_confirm_bug_scrap.js": {
+    "mtime": 1785505152.3143528,
+    "ast_hash": "d294fc8d88d503bc12379c9643a6b9e4",
     "semantic_hash": ""
   },
-  "test/output/Chapa_SAC_350__real____Estrategia_2_sheet0.svg": {
-    "mtime": 1784132281.6038375,
-    "ast_hash": "417af8abb8579d8949e6d74e057fe61a",
+  "test/baseline.test.js": {
+    "mtime": 1785868993.4395401,
+    "ast_hash": "4026788d860b65fa0037784f3afa9db9",
     "semantic_hash": ""
   },
-  "test/output/Grande_Peq___Estrategia_2_sheet0.svg": {
-    "mtime": 1784132281.5958376,
-    "ast_hash": "8a88c0fa0ec3ebda74a93fc899fef429",
+  "test/fase21-ordem.test.js": {
+    "mtime": 1785868993.4785473,
+    "ast_hash": "687ad1a8d4ec56073685a1be7c724c09",
     "semantic_hash": ""
   },
-  "test/output/Grande_Peq___Greedy__0__sheet0.svg": {
-    "mtime": 1784132281.5938356,
-    "ast_hash": "58161c52b9fc2b55e97b472e2394b170",
+  "test/guilhotina.test.js": {
+    "mtime": 1785944876.0757325,
+    "ast_hash": "0fe2196c4f4046d4da9b0bcedf5713ac",
     "semantic_hash": ""
   },
-  "test/output/Horizontal_Misto___Estrategia_1_sheet0.svg": {
-    "mtime": 1784132281.5998454,
-    "ast_hash": "8cf5cb79df81dabc7a8d2c33a609e2c3",
+  "test/helpers.js": {
+    "mtime": 1785868969.2045197,
+    "ast_hash": "988f1dbad99fac94229b5e80fb757052",
     "semantic_hash": ""
   },
-  "test/output/Misto_G_M_P_X___Beam__5__sheet0.svg": {
-    "mtime": 1784132281.592836,
-    "ast_hash": "93ba015ab71e3f11a842370f2fa03dfe",
+  "test/hstar.test.js": {
+    "mtime": 1786988243.3187401,
+    "ast_hash": "2ab36fe754564ac654e75e331711e4fc",
     "semantic_hash": ""
   },
-  "test/output/Misto_G_M_P_X___Greedy__0__sheet0.svg": {
-    "mtime": 1784132281.5818367,
-    "ast_hash": "9cd09b1201b87a2a74fc18fa913bdfaa",
+  "test/multisheet-filtro.test.js": {
+    "mtime": 1786987388.7943,
+    "ast_hash": "f536431c488648204dd7624d1583c5c6",
     "semantic_hash": ""
   },
-  "test/output/Retangulo_Misto___Estrategia_2_sheet0.svg": {
-    "mtime": 1784132281.6018376,
-    "ast_hash": "996b11ef20d652b272c68e59c8d8153f",
+  "test/run.js": {
+    "mtime": 1785868704.360382,
+    "ast_hash": "f2301a2397a9ddfc64f54af9b133adc8",
     "semantic_hash": ""
   },
-  "test/output/Vertical_Misto___Estrategia_0_sheet0.svg": {
-    "mtime": 1784132281.5978374,
-    "ast_hash": "49c84a55fa6798f26bce47235f4c1eb7",
+  "test/scrap.test.js": {
+    "mtime": 1785940887.8919477,
+    "ast_hash": "19367e5e2ed06d643eb9bd091e9257c1",
     "semantic_hash": ""
   },
-  "tests/polygon-sheet.test.js": {
-    "mtime": 1784563867.9925792,
-    "ast_hash": "cdf81b5a29b39737798a125eaa6a0ada",
-    "semantic_hash": ""
-  },
-  "test/timeout-scenario.json": {
-    "mtime": 1785444359.9333472,
-    "ast_hash": "75f4de004a76a5dff6bc8ed30083459d",
+  "test/y-first.test.js": {
+    "mtime": 1787143042.037125,
+    "ast_hash": "5fb336dc948e126d5451c16abed8a4e2",
     "semantic_hash": ""
   }
 }
