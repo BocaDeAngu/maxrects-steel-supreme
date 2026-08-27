@@ -20,10 +20,18 @@ test('peça maior que a chapa vai para unplaced', () => {
   assert.strictEqual(r.sheets[0].pieces.length, 1);
 });
 
-test('margin impede segunda peça na mesma chapa, permite em chapa maior', () => {
-  // peça 100 + margin 10 → espaço reservado 110; chapa 210x120 só comporta 1 em X
-  const justa = nest(pecas([[100, 100], [100, 100]]), 210, 120, { margin: 10, rotation: false });
-  assert.strictEqual(justa.sheets.length, 2, 'chapa 210 deve exigir 2 chapas (1 peça cada)');
+test('margin separa peças vizinhas; peça pode encostar na borda (task 0069)', () => {
+  // margin é só entre peças: 100 + 10 + 100 = 210 → chapa 210 acomoda 2 peças
+  // coladas nas bordas (faixa de margin da 2ª transborda a borda, permitido).
+  const coladas = nest(pecas([[100, 100], [100, 100]]), 210, 120, { margin: 10, rotation: false });
+  assert.strictEqual(coladas.sheets.length, 1, 'chapa 210 = 100+10+100 → 1 chapa com 2 peças');
+  assert.strictEqual(coladas.sheets[0].pieces.length, 2);
+  const ps = coladas.sheets[0].pieces;
+  ps.sort((a, b) => a.x - b.x);
+  assert.ok(ps[1].x - (ps[0].x + ps[0].width) >= 10 - 1e-6, 'gap entre peças ≥ margin');
+  // chapa 209 < 210 → só 1 peça cabe em X (peça real 100 > sobra 99)
+  const justa = nest(pecas([[100, 100], [100, 100]]), 209, 120, { margin: 10, rotation: false });
+  assert.strictEqual(justa.sheets.length, 2, 'chapa 209 deve exigir 2 chapas (1 peça cada)');
   for (const s of justa.sheets) assert.strictEqual(s.pieces.length, 1);
   // chapa 220x120 comporta 2 na mesma chapa (110×2)
   const folgada = nest(pecas([[100, 100], [100, 100]]), 220, 120, { margin: 10, rotation: false });

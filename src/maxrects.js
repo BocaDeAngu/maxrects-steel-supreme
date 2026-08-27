@@ -310,8 +310,11 @@ class MaxRectsBin {
     // lookAhead from strategy config unless explicitly overridden
     const lookAhead = opts.lookAhead != null ? opts.lookAhead : (this._strategy?.lookAhead ?? 1);
     const { remaining = [], rotation = true } = opts;
-    const mw = w + this.margin;
-    const mh = h + this.margin;
+    // Encaixe com transbordo de margin permitido SÓ na borda do bin:
+    // a peça REAL precisa caber no free rect; a faixa de margin pode
+    // transbordar quando o fr encosta na borda do bin (peça↔borda é
+    // responsabilidade do border do sheet, não da margin).
+    const cab = (ww, hh, fr) => _cabeComMargem(fr, ww, hh, this.binW, this.binH, this.margin);
 
     // ── rotationMode: 'fit-only' tenta sem rotação primeiro ──
     // Só rotaciona se a orientação original não couber em nenhum free rect.
@@ -320,10 +323,11 @@ class MaxRectsBin {
     // Pass 1: orientação original
     for (let i = 0; i < this.freeRects.length; i++) {
       const fr = this.freeRects[i];
-      if (mw <= fr.w && mh <= fr.h) {
+      const c = cab(w, h, fr);
+      if (c) {
         candidates.push({
           frIdx: i, px: fr.x, py: fr.y,
-          pw: mw, ph: mh,
+          pw: c.pw, ph: c.ph,
           rotated: false
         });
       }
@@ -333,10 +337,11 @@ class MaxRectsBin {
     if (candidates.length === 0 && rotation === 'fit-only') {
       for (let i = 0; i < this.freeRects.length; i++) {
         const fr = this.freeRects[i];
-        if (mh <= fr.w && mw <= fr.h) {
+        const c = cab(h, w, fr);
+        if (c) {
           candidates.push({
             frIdx: i, px: fr.x, py: fr.y,
-            pw: mh, ph: mw,
+            pw: c.pw, ph: c.ph,
             rotated: true
           });
         }
@@ -350,17 +355,21 @@ class MaxRectsBin {
       const addNatural = candidates.length === 0;
       for (let i = 0; i < this.freeRects.length; i++) {
         const fr = this.freeRects[i];
-        if (addNatural && mw <= fr.w && mh <= fr.h) {
-          candidates.push({
-            frIdx: i, px: fr.x, py: fr.y,
-            pw: mw, ph: mh,
-            rotated: false
-          });
+        if (addNatural) {
+          const c = cab(w, h, fr);
+          if (c) {
+            candidates.push({
+              frIdx: i, px: fr.x, py: fr.y,
+              pw: c.pw, ph: c.ph,
+              rotated: false
+            });
+          }
         }
-        if (mh <= fr.w && mw <= fr.h) {
+        const c = cab(h, w, fr);
+        if (c) {
           candidates.push({
             frIdx: i, px: fr.x, py: fr.y,
-            pw: mh, ph: mw,
+            pw: c.pw, ph: c.ph,
             rotated: true
           });
         }
@@ -554,10 +563,11 @@ class MaxRectsBin {
         let fitsInRect = 0;
         for (let d = 0; d < depth; d++) {
           const p = remaining[d];
-          const pmw = p.w + this.margin;
-          const pmh = p.h + this.margin;
-          if ((pmw <= sr.w && pmh <= sr.h) ||
-              (rotation && pmh <= sr.w && pmw <= sr.h)) {
+          // Mesmo critério do insert: peça real no fr + transbordo de
+          // margin permitido só na borda do bin (senão o edge-fit
+          // seria subestimado no score).
+          if (_cabeComMargem(sr, p.w, p.h, this.binW, this.binH, this.margin) ||
+              (rotation && _cabeComMargem(sr, p.h, p.w, this.binW, this.binH, this.margin))) {
             fitsInRect++;
           }
         }
@@ -1280,11 +1290,11 @@ function _run(pieces, sheetDescriptors, opts) {
     let _loopGuard = 0;
 
     // Separa peças que excedem a chapa — o algoritmo não as trata e pode entrar em loop infinito (Beam Search)
-    // Considera margin entre peças e rotação (se ativa): a peça cabe em qualquer orientação
+    // Peça REAL (sem margin): margin é só entre peças; peça↔borda da área útil é o border da chapa.
+    // Considera rotação (se ativa): a peça cabe em qualquer orientação
     const tooLarge = remaining.filter(p => {
-      const mw = p.w + margin, mh = p.h + margin;
-      const fitsNormal = mw <= effW && mh <= effH;
-      const fitsRotated = rotation && mh <= effW && mw <= effH;
+      const fitsNormal = p.w <= effW && p.h <= effH;
+      const fitsRotated = rotation && p.h <= effW && p.w <= effH;
       return !fitsNormal && !fitsRotated;
     });
     if (tooLarge.length > 0) {
@@ -1312,7 +1322,7 @@ function _run(pieces, sheetDescriptors, opts) {
         const shelfResult = _shelfNest(remaining, effW, effH, {
           margin,
           rotation,
-          hStar: _computeHStar(remaining, effH, margin)
+          hStar: _computeHStar(remaining, effH)
         });
 
         if (shelfResult.placed.length === 0) break;
@@ -1652,6 +1662,37 @@ function _run(pieces, sheetDescriptors, opts) {
 }
 
 // ────────────────────────────────────────────────────────────
+//  Encaixe com transbordo de margin na borda do bin
+// ────────────────────────────────────────────────────────────
+
+const EPS = 1e-6;
+
+/**
+ * Decide se a peça (w × h) cabe no free rect `fr`.
+ *
+ * Semântica alvo: margin = distância entre PEÇAS; peça↔borda da área útil
+ * é responsabilidade do border do sheet. A peça REAL precisa caber no fr;
+ * a faixa de margin (w+margin, h+margin) pode transbordar o fr SOMENTE
+ * quando o fr encosta na borda do bin no eixo transbordado (buraco interno
+ * entre peças JAMAIS aceita transbordo).
+ *
+ * @returns {null|{pw:number, ph:number}} box (peça + margin) CLAMPADO ao
+ *   bin — `_bboxMaxX/Y`, splits e scores nunca passam da borda.
+ */
+function _cabeComMargem(fr, w, h, binW, binH, margin) {
+  if (w > fr.w + EPS || h > fr.h + EPS) return null; // peça real não cabe no fr
+  const boxX = fr.x + w + margin;
+  const boxY = fr.y + h + margin;
+  const dx = fr.x + fr.w >= binW - EPS ? 0 : Math.max(0, boxX - (fr.x + fr.w));
+  const dy = fr.y + fr.h >= binH - EPS ? 0 : Math.max(0, boxY - (fr.y + fr.h));
+  if (dx > EPS || dy > EPS) return null; // transbordou E não é borda do bin
+  return {
+    pw: Math.min(w + margin, binW - fr.x),
+    ph: Math.min(h + margin, binH - fr.y)
+  };
+}
+
+// ────────────────────────────────────────────────────────────
 //  Shelf FFDH (Guilhotina) — cortável por construção
 // ────────────────────────────────────────────────────────────
 
@@ -1715,7 +1756,9 @@ function _shelfNest(sortedPieces, sheetW, sheetH, opts) {
 
   const abreFileira = (h) => {
     const y = shelves.length === 0 ? 0 : shelves[shelves.length - 1].y + shelves[shelves.length - 1].h;
-    if (y + h > sheetH + 1e-9) return -1;
+    // Última fileira: a peça REAL pode encostar no fundo — só a faixa de
+    // margin transborda (y + h - margin = Y da peça real).
+    if (y + h - margin > sheetH + 1e-9) return -1;
     shelves.push({ y, h, x: 0 });
     return shelves.length - 1;
   };
@@ -1725,10 +1768,12 @@ function _shelfNest(sortedPieces, sheetW, sheetH, opts) {
     const pw = piece.w + margin, ph = piece.h + margin;
     const rw = piece.h + margin, rh = piece.w + margin;
 
-    // First-fit: primeira fileira aberta onde cabe
+    // First-fit: primeira fileira aberta onde a PEÇA REAL cabe (largura
+    // real ≤ sheetW; a faixa de margin pode transbordar a borda direita
+    // em até margin — pw = piece.w + margin garante o limite).
     let idx = -1;
     for (let i = 0; i < shelves.length; i++) {
-      if (ph <= shelves[i].h + 1e-9 && shelves[i].x + pw <= sheetW + 1e-9) { idx = i; break; }
+      if (ph <= shelves[i].h + 1e-9 && shelves[i].x + piece.w <= sheetW + 1e-9) { idx = i; break; }
     }
     if (idx === -1) idx = abreFileira(ph);
     if (idx >= 0) {
@@ -1740,7 +1785,7 @@ function _shelfNest(sortedPieces, sheetW, sheetH, opts) {
     if (rotation && !lane) {
       let ridx = -1;
       for (let i = 0; i < shelves.length; i++) {
-        if (rh <= shelves[i].h + 1e-9 && shelves[i].x + rw <= sheetW + 1e-9) { ridx = i; break; }
+        if (rh <= shelves[i].h + 1e-9 && shelves[i].x + piece.h <= sheetW + 1e-9) { ridx = i; break; }
       }
       if (ridx === -1) ridx = abreFileira(rh);
       if (ridx >= 0) {
@@ -1977,10 +2022,12 @@ function _scoreLayout(bin, remaining, rotation) {
   let fitScore = 0;
   const margin = bin.margin || 0;
   // Menor peça do look-ahead: free rect que não a comporta tem bestFit=0
-  // garantido — skip do loop O(lookahead).
+  // garantido — skip do loop O(lookahead). (Sem margin: a faixa de margin
+  // pode transbordar na borda do bin — fr real de dimensão minW ainda
+  // acomoda a menor peça.)
   let minW = 0;
   for (const p of lookahead) {
-    const d = Math.min(p.w, p.h) + margin;
+    const d = Math.min(p.w, p.h);
     if (minW === 0 || d < minW) minW = d;
   }
 
@@ -1995,8 +2042,11 @@ function _scoreLayout(bin, remaining, rotation) {
     for (const p of lookahead) {
       const rw = p.w + margin;
       const rh = p.h + margin;
-      // A/B (rotação) têm o MESMO score — só muda o teste de caber
-      if ((rw <= rect.w && rh <= rect.h) || (rotation && rh <= rect.w && rw <= rect.h)) {
+      // A/B (rotação) têm o MESMO score — só muda o teste de caber.
+      // Mesmo critério do insert: peça real no retalho + transbordo de
+      // margin permitido só na borda do bin (edge-fit não é subestimado).
+      if (_cabeComMargem(rect, p.w, p.h, bin.binW, bin.binH, margin) ||
+          (rotation && _cabeComMargem(rect, p.h, p.w, bin.binW, bin.binH, margin))) {
         // Fit ratio: quanto do retalho a peça preenche
         const areaFit = (rw * rh) / rectArea;
         // Aspect fit: quão compatível é o formato
@@ -2064,26 +2114,26 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
 
   // Menor peça restante: free rect menor que ela (nas duas dimensões)
   // nunca acomoda peça futura — descarta no split/clip para manter fr baixo.
+  // (Sem +margin: faixa de margin pode transbordar na borda do bin — fr de
+  // largura real minW ainda acomoda a menor peça colada na borda.)
   let minW = 0;
   for (const p of remaining) {
     const d = Math.min(p.w, p.h);
     if (minW === 0 || d < minW) minW = d;
   }
-  minW += beam.length ? beam[0].bin.margin : 0;
 
   for (const entry of beam) {
     const bin = entry.bin;
-    const mw = piece.w + bin.margin;
-    const mh = piece.h + bin.margin;
     const hStarBin = bin._hStar;
     const optionsFor = (fr) => {
       const opts = [];
-      if (mw <= fr.w && mh <= fr.h) {
-        opts.push({ px: fr.x, py: fr.y, pw: mw, ph: mh, rotated: false });
-      }
+      const cab = (ww, hh) => _cabeComMargem(fr, ww, hh, bin.binW, bin.binH, bin.margin);
+      const a = cab(piece.w, piece.h);
+      if (a) opts.push({ px: fr.x, py: fr.y, pw: a.pw, ph: a.ph, rotated: false });
       // Peça quadrada: orientação B é idêntica à A, skip (2x cands).
-      if (rotation && mw !== mh && mh <= fr.w && mw <= fr.h) {
-        opts.push({ px: fr.x, py: fr.y, pw: mh, ph: mw, rotated: true });
+      if (rotation && piece.w !== piece.h) {
+        const b = cab(piece.h, piece.w);
+        if (b) opts.push({ px: fr.x, py: fr.y, pw: b.pw, ph: b.ph, rotated: true });
       }
       return opts;
     };
@@ -2232,7 +2282,7 @@ function _beamInsert(beam, piece, remaining, K, rotation) {
  * Pool heterogêneo (sem dimensão dominante) ou resto com poucas peças →
  * null (orientação livre, sem regressão).
  */
-function _computeHStar(pieces, sheetH, margin) {
+function _computeHStar(pieces, sheetH) {
   if (pieces.length < 3) return null;
   const count = new Map();
   for (const p of pieces) {
@@ -2243,7 +2293,8 @@ function _computeHStar(pieces, sheetH, margin) {
   let hStar = null, best = 0;
   for (const [d, c] of count) {
     // Só dimensões que cabem como altura de fileira no Y da chapa
-    if (d + margin > sheetH) continue;
+    // (peça real encosta no fundo; margin transborda a borda).
+    if (d > sheetH) continue;
     // Desempate: empate fica com a MAIOR dimensão — preenche o Y da
     // chapa (largura) e empilha mais peças no X. Antes pegava a 1ª
     // (menor quando w<h) e forçava rotação pior: 1150x1400×5 em chapa
@@ -2266,7 +2317,7 @@ function _beamNest(sortedPieces, sheetW, sheetH, opts) {
   const estrategia = opts.estrategia != null ? opts.estrategia : -1;
 
   // h* do pool desta folha — recalculado a cada folha (o pool esvazia)
-  const hStar = _computeHStar(sortedPieces, sheetH, margin);
+  const hStar = _computeHStar(sortedPieces, sheetH);
 
   // Inicializa beam com 1 bin vazio
   const initialBin = new MaxRectsBin(sheetW, sheetH, {
@@ -2294,8 +2345,9 @@ function _beamNest(sortedPieces, sheetW, sheetH, opts) {
     const remaining = sortedPieces.slice(pi + 1);
 
     // Guard: peça maior que a chapa em qualquer orientação → não tenta posicionar
-    const mw = piece.w + margin, mh = piece.h + margin;
-    const fitsSheet = (mw <= sheetW && mh <= sheetH) || (rotation && mh <= sheetW && mw <= sheetH);
+    // (peça REAL: margin é entre peças; na borda só vale o border do sheet)
+    const fitsSheet = (piece.w <= sheetW && piece.h <= sheetH) ||
+                      (rotation && piece.h <= sheetW && piece.w <= sheetH);
     if (!fitsSheet) {
       stillRemaining.push(piece);
       continue;

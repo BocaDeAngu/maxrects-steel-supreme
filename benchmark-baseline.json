@@ -1,190 +1,192 @@
 [
   {
-    "scenario": "50x90 sentido largura (muitas)",
+    "scenario": "50x90 direcao largura (muitas)",
     "sheets": 2,
     "totalPieces": 3200,
     "totalArea": 14400000,
     "avgUtilization": 100,
     "unplaced": 0,
-    "timeMs": 50,
+    "timeMs": 297,
     "sheetsDetail": [
       {
         "sheet": 1,
-        "pieces": 1572,
-        "usedArea": 7074000,
-        "utilization": 98.25,
-        "vezesCortada": 1
+        "pieces": 1584,
+        "usedArea": 7128000,
+        "utilization": 99
       },
       {
         "sheet": 2,
-        "pieces": 56,
-        "usedArea": 252000,
-        "utilization": 3.5,
-        "vezesCortada": 1
+        "pieces": 32,
+        "usedArea": 144000,
+        "utilization": 2
       }
     ]
   },
   {
-    "scenario": "50x90 sem sentido (muitas)",
+    "scenario": "50x90 sem direcao (muitas)",
     "sheets": 2,
     "totalPieces": 3200,
     "totalArea": 14400000,
     "avgUtilization": 100,
     "unplaced": 0,
-    "timeMs": 87,
+    "timeMs": 248,
     "sheetsDetail": [
       {
         "sheet": 1,
-        "pieces": 1561,
-        "usedArea": 7024500,
-        "utilization": 97.56,
-        "vezesCortada": 1
+        "pieces": 1584,
+        "usedArea": 7128000,
+        "utilization": 99
       },
       {
         "sheet": 2,
-        "pieces": 78,
-        "usedArea": 351000,
-        "utilization": 4.88,
-        "vezesCortada": 1
+        "pieces": 32,
+        "usedArea": 144000,
+        "utilization": 2
       }
     ]
   },
   {
-    "scenario": "50x90 sentido comprimento (muitas)",
+    "scenario": "50x90 direcao comprimento (muitas)",
     "sheets": 2,
     "totalPieces": 3200,
     "totalArea": 14400000,
     "avgUtilization": 100,
     "unplaced": 0,
-    "timeMs": 83,
+    "timeMs": 253,
     "sheetsDetail": [
       {
         "sheet": 1,
-        "pieces": 1597,
-        "usedArea": 7186500,
-        "utilization": 99.81,
-        "vezesCortada": 1
+        "pieces": 1584,
+        "usedArea": 7128000,
+        "utilization": 99
       },
       {
         "sheet": 2,
-        "pieces": 6,
-        "usedArea": 27000,
-        "utilization": 0.38,
-        "vezesCortada": 1
+        "pieces": 32,
+        "usedArea": 144000,
+        "utilization": 2
       }
     ]
   },
   {
-    "scenario": "mistas sentido largura",
-    "sheets": 1,
+    "scenario": "mistas direcao largura",
+    "sheets": 2,
     "totalPieces": 260,
     "totalArea": 2940000,
-    "avgUtilization": 81.67,
-    "unplaced": 0,
-    "timeMs": 4,
-    "sheetsDetail": [
-      {
-        "sheet": 1,
-        "pieces": 260,
-        "usedArea": 2940000,
-        "utilization": 81.67,
-        "vezesCortada": 1
-      }
-    ]
-  },
-  {
-    "scenario": "mistas sem sentido",
-    "sheets": 1,
-    "totalPieces": 260,
-    "totalArea": 2940000,
-    "avgUtilization": 81.67,
+    "avgUtilization": 40.83,
     "unplaced": 0,
     "timeMs": 7,
     "sheetsDetail": [
       {
         "sheet": 1,
-        "pieces": 260,
-        "usedArea": 2940000,
-        "utilization": 81.67,
-        "vezesCortada": 1
+        "pieces": 202,
+        "usedArea": 2679000,
+        "utilization": 74.42
+      },
+      {
+        "sheet": 2,
+        "pieces": 58,
+        "usedArea": 261000,
+        "utilization": 7.25
+      }
+    ]
+  },
+  {
+    "scenario": "mistas sem direcao",
+    "sheets": 2,
+    "totalPieces": 260,
+    "totalArea": 2940000,
+    "avgUtilization": 40.83,
+    "unplaced": 0,
+    "timeMs": 6,
+    "sheetsDetail": [
+      {
+        "sheet": 1,
+        "pieces": 202,
+        "usedArea": 2679000,
+        "utilization": 74.42
+      },
+      {
+        "sheet": 2,
+        "pieces": 58,
+        "usedArea": 261000,
+        "utilization": 7.25
       }
     ]
   },
   {
     "scenario": "poucas pecas grandes",
-    "sheets": 5,
+    "sheets": 6,
     "totalPieces": 20,
     "totalArea": 6240000,
-    "avgUtilization": 62.4,
+    "avgUtilization": 52,
     "unplaced": 0,
     "timeMs": 0,
     "sheetsDetail": [
       {
         "sheet": 1,
-        "pieces": 3,
-        "usedArea": 1440000,
-        "utilization": 72,
-        "vezesCortada": 1
+        "pieces": 2,
+        "usedArea": 960000,
+        "utilization": 48
       },
       {
         "sheet": 2,
-        "pieces": 3,
-        "usedArea": 1440000,
-        "utilization": 72,
-        "vezesCortada": 1
+        "pieces": 6,
+        "usedArea": 1200000,
+        "utilization": 60
       },
       {
         "sheet": 3,
-        "pieces": 3,
-        "usedArea": 1160000,
-        "utilization": 58,
-        "vezesCortada": 1
+        "pieces": 6,
+        "usedArea": 1200000,
+        "utilization": 60
       },
       {
         "sheet": 4,
-        "pieces": 7,
-        "usedArea": 1400000,
-        "utilization": 70,
-        "vezesCortada": 1
+        "pieces": 2,
+        "usedArea": 960000,
+        "utilization": 48
       },
       {
         "sheet": 5,
-        "pieces": 4,
-        "usedArea": 800000,
-        "utilization": 40,
-        "vezesCortada": 1
+        "pieces": 2,
+        "usedArea": 960000,
+        "utilization": 48
+      },
+      {
+        "sheet": 6,
+        "pieces": 2,
+        "usedArea": 960000,
+        "utilization": 48
       }
     ]
   },
   {
-    "scenario": "barras 30x100 sentido largura (muitas)",
+    "scenario": "barras 30x100 direcao largura (muitas)",
     "sheets": 3,
     "totalPieces": 3000,
     "totalArea": 9000000,
     "avgUtilization": 83.33,
     "unplaced": 0,
-    "timeMs": 25,
+    "timeMs": 149,
     "sheetsDetail": [
       {
         "sheet": 1,
-        "pieces": 1081,
-        "usedArea": 3243000,
-        "utilization": 90.08,
-        "vezesCortada": 1
+        "pieces": 1073,
+        "usedArea": 3219000,
+        "utilization": 89.42
       },
       {
         "sheet": 2,
-        "pieces": 1081,
-        "usedArea": 3243000,
-        "utilization": 90.08,
-        "vezesCortada": 1
+        "pieces": 1073,
+        "usedArea": 3219000,
+        "utilization": 89.42
       },
       {
         "sheet": 3,
-        "pieces": 838,
-        "usedArea": 2514000,
-        "utilization": 69.83,
-        "vezesCortada": 1
+        "pieces": 854,
+        "usedArea": 2562000,
+        "utilization": 71.17
       }
     ]
   }
