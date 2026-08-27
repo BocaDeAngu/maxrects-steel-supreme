@@ -334,7 +334,10 @@ class MaxRectsBin {
     }
 
     // Pass 2: se nada coube sem rotação, tenta com rotação
-    if (candidates.length === 0 && rotation === 'fit-only') {
+    // rotation='fit-only' OU rotation=true (classic-greedy): rotaciona
+    // apenas como fallback — se a orientação original couber em algum
+    // free rect, ela vence (candidatos do Pass 1 ficam).
+    if (candidates.length === 0 && rotation) {
       for (let i = 0; i < this.freeRects.length; i++) {
         const fr = this.freeRects[i];
         const c = cab(h, w, fr);

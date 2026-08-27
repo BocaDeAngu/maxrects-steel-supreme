@@ -20,6 +20,25 @@ test('peça maior que a chapa vai para unplaced', () => {
   assert.strictEqual(r.sheets[0].pieces.length, 1);
 });
 
+test('classic-greedy rotation=true rotaciona como fallback (task 0069.3)', () => {
+  // Peça 5990x2550 em 2560x6000: só cabe rotacionada (2550x5990).
+  // Antes do fix, classic (sem estrategia) + rotation:true nunca gerava
+  // candidato rotacionado → unplaced=1 (fit-only funcionava).
+  const comRot = nest(pecas([[5990, 2550]]), 2560, 6000, { rotation: true, margin: 0, borda_mm: 0 });
+  assert.strictEqual(comRot.unplaced, 0, 'rotation:true deve rotacionar quando só cabe rotacionada');
+  const p = comRot.sheets[0].pieces[0];
+  assert.strictEqual(p.rotated, true);
+  assert.strictEqual(p.width, 2550);
+  assert.strictEqual(p.height, 5990);
+  // Sem rotação: vai para unplaced
+  const semRot = nest(pecas([[5990, 2550]]), 2560, 6000, { rotation: false, margin: 0, borda_mm: 0 });
+  assert.strictEqual(semRot.unplaced, 1);
+  assert.strictEqual(semRot.sheets.length, 0);
+  // Peça que cabe natural continua natural (fallback não sobrepõe Pass 1)
+  const natural = nest(pecas([[100, 50]]), 200, 100, { rotation: true, margin: 0 });
+  assert.strictEqual(natural.sheets[0].pieces[0].rotated, false);
+});
+
 test('margin separa peças vizinhas; peça pode encostar na borda (task 0069)', () => {
   // margin é só entre peças: 100 + 10 + 100 = 210 → chapa 210 acomoda 2 peças
   // coladas nas bordas (faixa de margin da 2ª transborda a borda, permitido).
